@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260615-dbfix";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260615-lead-values";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -756,7 +756,7 @@ function renderPaymentsSummary(items) {
 function renderPaymentsTable(items) {
   if (!items.length) return emptyState("Nenhum pagamento encontrado", "Ajuste os filtros ou vincule um plano a um lead.", null, "money");
   return `<div class="table-wrap"><table class="data-table payment-table">
-    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>1ª parcela</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
+    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
     <tbody>${items.map((lead) => `<tr>
       <td>${formatDate(paymentDate(lead))}</td>
       <td><strong>${escapeHtml(lead.name)}</strong><br><span class="muted">${escapeHtml(lead.phone || "")}</span></td>
@@ -803,7 +803,7 @@ function exportPaymentsXls(items) {
   </style></head><body><table>
     <tr><th class="title" colspan="10">Pagamentos e Premiações</th></tr>
     <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td></td></tr>
-    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>1ª parcela</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
+    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
     ${rows}
   </table></body></html>`;
   const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
@@ -945,7 +945,7 @@ function renderSettingsSection() {
         <div>
           <span class="eyebrow eyebrow-dark">Regras comerciais</span>
           <h2>Planos</h2>
-          <p class="muted">Cadastre a primeira parcela, percentual de comissão e possíveis premiações.</p>
+          <p class="muted">Cadastre somente o nome do plano e o percentual de comissão.</p>
         </div>
         <button class="button button-primary" data-new="plans">${icon("plus")} Novo plano</button>
       </div>
@@ -983,13 +983,8 @@ function renderPlanCard(plan) {
       </div>
     </div>
     <div class="plan-values">
-      <div><span>Primeira parcela</span><strong>${currency(plan.installment_value)}</strong></div>
       <div><span>Comissão</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
-      <div><span>Valor da comissão</span><strong>${currency(Number(plan.installment_value || 0) * Number(plan.commission_percent || 0) / 100)}</strong></div>
-    </div>
-    <div class="plan-bonus ${plan.has_bonus ? "active" : ""}">
-      <strong>${plan.has_bonus ? "Com premiação" : "Sem premiação"}</strong>
-      ${plan.has_bonus ? `<span>${escapeHtml(plan.bonus_description || "Premiação")} · ${currency(plan.bonus_value)}</span>` : ""}
+      <div><span>Cálculo</span><strong>Sobre o valor do lead</strong></div>
     </div>
   </article>`;
 }
@@ -1038,11 +1033,7 @@ const schemas = {
     endpoint: "plans",
     fields: [
       ["name", "Nome do plano", "text", true],
-      ["installment_value", "Valor da primeira parcela (R$)", "number", true],
-      ["commission_percent", "Percentual de comissão (%)", "number", true],
-      ["has_bonus", "Possui premiação?", "select", true, [["0", "Não"], ["1", "Sim"]]],
-      ["bonus_description", "Descrição da premiação", "text"],
-      ["bonus_value", "Valor da premiação (R$)", "number"]
+      ["commission_percent", "Percentual de comissão (%)", "number", true]
     ]
   },
   leads: {
@@ -1057,6 +1048,10 @@ const schemas = {
       ["contact_date", "Data de contato", "date"],
       ["effective_date", "Data de vigência", "date"],
       ["plan_id", "Plano escolhido", "plan"],
+      ["plan_value", "Valor fechado do plano (R$)", "number"],
+      ["has_bonus", "Possui premiação?", "select", true, [["0", "Não"], ["1", "Sim"]]],
+      ["bonus_description", "Descrição da premiação", "text"],
+      ["bonus_value", "Valor da premiação (R$)", "number"],
       ["status", "Status", "option", true, "leads.status"],
       ["notes", "Observações", "textarea", false, null, "full"]
     ]
@@ -1112,7 +1107,7 @@ async function openEntityForm(entity, item = null) {
   $("#modal-title").textContent = `${item ? "Editar" : "Novo"} ${schema.title.toLowerCase()}`;
   $("#modal-body").innerHTML = `<form id="entity-form" class="entity-form">
     <div class="form-grid">${schema.fields.map((field) => renderField(field, item || {})).join("")}</div>
-    ${entity === "leads" ? `<div id="lead-plan-preview">${renderLeadPlanPreview(item?.plan_id)}</div>` : ""}
+    ${entity === "leads" ? '<div id="lead-plan-preview"></div>' : ""}
     <div class="form-actions">
       <button type="button" class="button button-secondary" data-close-modal>Cancelar</button>
       <button type="submit" class="button button-primary">${item ? "Salvar alterações" : "Cadastrar"}</button>
@@ -1121,9 +1116,12 @@ async function openEntityForm(entity, item = null) {
   $("#modal").hidden = false;
   document.body.style.overflow = "hidden";
   setTimeout(() => $("#entity-form input, #entity-form select")?.focus(), 20);
-  $("#entity-form select[name='plan_id']")?.addEventListener("change", (event) => {
-    $("#lead-plan-preview").innerHTML = renderLeadPlanPreview(event.target.value);
-  });
+  if (entity === "leads") {
+    ["plan_id", "plan_value", "has_bonus", "bonus_description", "bonus_value"].forEach((name) => {
+      $(`#entity-form [name="${name}"]`)?.addEventListener(name === "bonus_description" || name === "plan_value" || name === "bonus_value" ? "input" : "change", updateLeadPlanPreview);
+    });
+    updateLeadPlanPreview();
+  }
   $("#entity-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = event.submitter;
@@ -1134,10 +1132,20 @@ async function openEntityForm(entity, item = null) {
     });
     if ("lead_id" in data) data.lead_id = data.lead_id || null;
     if ("plan_id" in data) data.plan_id = data.plan_id || null;
-    ["installment_value", "commission_percent", "bonus_value"].forEach((key) => {
+    ["plan_value", "commission_percent", "bonus_value"].forEach((key) => {
       if (key in data) data[key] = Number(String(data[key]).replace(",", ".") || 0);
     });
     if ("has_bonus" in data) data.has_bonus = data.has_bonus === "1";
+    if (entity === "leads" && data.plan_id && data.plan_value <= 0) {
+      showToast("Informe o valor fechado do plano.", "error");
+      submit.disabled = false;
+      return;
+    }
+    if (entity === "leads" && data.has_bonus && data.bonus_value <= 0) {
+      showToast("Informe o valor da premiação.", "error");
+      submit.disabled = false;
+      return;
+    }
     try {
       await api(`/api/${schema.endpoint}${item ? `/${item.id}` : ""}`, {
         method: item ? "PUT" : "POST",
@@ -1180,7 +1188,7 @@ function renderField(field, item) {
       : type === "plan"
         ? state.plans.map((plan) => [
           String(plan.id),
-          `${plan.name} · ${currency(plan.installment_value)} · ${Number(plan.commission_percent || 0)}%`
+          `${plan.name} · ${Number(plan.commission_percent || 0)}%`
         ])
       : type === "option"
         ? optionValues(options)
@@ -1194,18 +1202,31 @@ function renderField(field, item) {
   return `<label class="${cls}"><span>${label}</span><input name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${type === "number" ? 'step="0.01" min="0"' : ""} /></label>`;
 }
 
-function renderLeadPlanPreview(planId) {
+function renderLeadPlanPreview(planId, planValue = 0, hasBonus = false, bonusDescription = "", bonusValue = 0) {
   const plan = state.plans.find((item) => sameId(item.id, planId));
   if (!plan) {
-    return `<div class="commission-preview muted">Selecione um plano para calcular a comissão automaticamente.</div>`;
+    return `<div class="commission-preview muted">Selecione um plano e informe o valor fechado para calcular a comissão.</div>`;
   }
-  const commission = Number(plan.installment_value || 0) * Number(plan.commission_percent || 0) / 100;
+  const commission = Number(planValue || 0) * Number(plan.commission_percent || 0) / 100;
   return `<div class="commission-preview">
-    <div><span>Primeira parcela</span><strong>${currency(plan.installment_value)}</strong></div>
+    <div><span>Valor fechado</span><strong>${currency(planValue)}</strong></div>
     <div><span>Percentual</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
     <div><span>Comissão calculada</span><strong>${currency(commission)}</strong></div>
-    <div><span>Premiação</span><strong>${plan.has_bonus ? `${currency(plan.bonus_value)} · ${escapeHtml(plan.bonus_description || "Sim")}` : "Não"}</strong></div>
+    <div><span>Premiação</span><strong>${hasBonus ? `${currency(bonusValue)} · ${escapeHtml(bonusDescription || "Premiação")}` : "Não"}</strong></div>
   </div>`;
+}
+
+function updateLeadPlanPreview() {
+  const form = $("#entity-form");
+  const preview = $("#lead-plan-preview");
+  if (!form || !preview) return;
+  preview.innerHTML = renderLeadPlanPreview(
+    form.elements.plan_id?.value,
+    Number(String(form.elements.plan_value?.value || 0).replace(",", ".")),
+    form.elements.has_bonus?.value === "1",
+    form.elements.bonus_description?.value || "",
+    Number(String(form.elements.bonus_value?.value || 0).replace(",", "."))
+  );
 }
 
 function closeModal() {

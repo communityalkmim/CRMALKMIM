@@ -148,21 +148,25 @@ async function applyPlanRule(payload) {
   const client = await getClient();
   const { data: plan, error } = await client
     .from("plans")
-    .select("id, name, installment_value, commission_percent, has_bonus, bonus_description, bonus_value")
+    .select("id, name, commission_percent")
     .eq("id", payload.plan_id)
     .single();
   if (error || !plan) throw apiError(error, "Plano não encontrado.");
-  const planValue = Number(plan.installment_value || 0);
+  const planValue = Number(payload.plan_value || 0);
+  if (planValue <= 0) throw new Error("Informe o valor fechado do plano.");
   const commissionPercent = Number(plan.commission_percent || 0);
+  const hasBonus = Boolean(payload.has_bonus);
+  const bonusValue = hasBonus ? Number(payload.bonus_value || 0) : 0;
+  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiação.");
   return {
     ...payload,
     plan_name: plan.name,
     plan_value: planValue,
     commission_percent: commissionPercent,
     commission: Math.round(planValue * commissionPercent) / 100,
-    has_bonus: Boolean(plan.has_bonus),
-    bonus_description: plan.has_bonus ? plan.bonus_description || null : null,
-    bonus_value: plan.has_bonus ? Number(plan.bonus_value || 0) : 0
+    has_bonus: hasBonus,
+    bonus_description: hasBonus ? payload.bonus_description || null : null,
+    bonus_value: bonusValue
   };
 }
 
@@ -173,13 +177,6 @@ async function createEntity(entity, body) {
   let payload = { ...body, user_id: user.id };
   if (entity === "leads") payload = await applyPlanRule(payload);
   if (entity === "appointments") payload.completed = Boolean(body.completed);
-  if (entity === "plans") {
-    payload.has_bonus = Boolean(body.has_bonus);
-    if (!payload.has_bonus) {
-      payload.bonus_description = null;
-      payload.bonus_value = 0;
-    }
-  }
   const { data, error } = await client.from(table).insert(payload).select("id").single();
   if (error) throw apiError(error);
   return { id: data.id };
@@ -191,14 +188,7 @@ async function updateEntity(entity, id, body) {
   let payload = { ...body };
   if (entity === "leads") payload = await applyPlanRule(payload);
   if (entity === "appointments" && "completed" in payload) payload.completed = Boolean(payload.completed);
-  if (entity === "plans") {
-    if ("has_bonus" in payload) payload.has_bonus = Boolean(payload.has_bonus);
-    if (payload.has_bonus === false) {
-      payload.bonus_description = null;
-      payload.bonus_value = 0;
-    }
-    payload.updated_at = new Date().toISOString();
-  }
+  if (entity === "plans") payload.updated_at = new Date().toISOString();
   if (entity === "leads") payload.updated_at = new Date().toISOString();
   const { error } = await client.from(table).update(payload).eq("id", id);
   if (error) throw apiError(error);
