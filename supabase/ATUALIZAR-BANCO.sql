@@ -1,4 +1,6 @@
--- Execute este arquivo no Supabase: SQL Editor > New query > Run.
+-- Atualizacao segura do Maikon CRM.
+-- Execute no Supabase: SQL Editor > New query > Run.
+-- Este script nao apaga os cadastros existentes.
 
 create extension if not exists pgcrypto;
 
@@ -14,30 +16,6 @@ create table if not exists public.plans (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, name)
-);
-
-create table if not exists public.leads (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  name text not null,
-  phone text,
-  email text,
-  origin text,
-  entry_date date,
-  contact_date date,
-  effective_date date,
-  plan_id uuid references public.plans(id) on delete restrict,
-  plan_name text,
-  plan_value numeric(12,2) not null default 0,
-  commission_percent numeric(6,2) not null default 0,
-  status text not null default 'Novo',
-  commission numeric(12,2) not null default 0,
-  has_bonus boolean not null default false,
-  bonus_description text,
-  bonus_value numeric(12,2) not null default 0,
-  notes text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
 );
 
 alter table public.leads add column if not exists contact_date date;
@@ -61,76 +39,8 @@ begin
   end if;
 end $$;
 
-create table if not exists public.appointments (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null,
-  lead_id uuid references public.leads(id) on delete set null,
-  date date not null,
-  time time,
-  reminder integer not null default 30,
-  notes text,
-  completed boolean not null default false,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.pending_items (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  lead_id uuid not null references public.leads(id) on delete cascade,
-  type text not null,
-  description text,
-  due_date date,
-  priority text not null default 'Média',
-  status text not null default 'Pendente',
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.tasks (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null,
-  type text,
-  category text,
-  lead_id uuid references public.leads(id) on delete set null,
-  date date not null,
-  time time,
-  priority text not null default 'Média',
-  status text not null default 'Pendente',
-  notes text,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.followups (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  lead_id uuid not null references public.leads(id) on delete cascade,
-  message text not null,
-  channel text not null default 'WhatsApp',
-  status text not null default 'Rascunho',
-  scheduled_at timestamptz,
-  sent_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.option_values (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  module text not null,
-  field text not null,
-  value text not null,
-  sort_order integer not null default 0,
-  created_at timestamptz not null default now(),
-  unique (user_id, module, field, value)
-);
-
-create index if not exists leads_user_status_idx on public.leads(user_id, status);
 create index if not exists leads_user_plan_idx on public.leads(user_id, plan_id);
 create index if not exists plans_user_name_idx on public.plans(user_id, name);
-create index if not exists appointments_user_date_idx on public.appointments(user_id, date);
-create index if not exists pending_user_due_idx on public.pending_items(user_id, due_date);
-create index if not exists tasks_user_date_idx on public.tasks(user_id, date);
-create index if not exists options_user_group_idx on public.option_values(user_id, module, field, sort_order);
 
 alter table public.plans enable row level security;
 alter table public.leads enable row level security;
@@ -150,6 +60,8 @@ grant select, insert, update, delete on table
   public.option_values
 to authenticated;
 
+-- Todos os usuarios cadastrados em Authentication > Users fazem parte
+-- da mesma equipe e acessam a mesma base do CRM.
 do $$
 declare
   table_name text;
@@ -183,7 +95,7 @@ begin
   where id = p_option_id;
 
   if current_option.id is null then
-    raise exception 'Opção não encontrada';
+    raise exception 'Opcao nao encontrada';
   end if;
   if clean_value = '' then
     raise exception 'Informe o novo nome';
@@ -237,7 +149,7 @@ begin
   where id = p_option_id;
 
   if current_option.id is null then
-    raise exception 'Opção não encontrada';
+    raise exception 'Opcao nao encontrada';
   end if;
 
   select count(*) into group_count
@@ -246,7 +158,7 @@ begin
     and field = current_option.field;
 
   if group_count <= 1 then
-    raise exception 'Mantenha pelo menos uma opção neste grupo';
+    raise exception 'Mantenha pelo menos uma opcao neste grupo';
   end if;
 
   if current_option.module = 'leads' and current_option.field = 'origin' then
@@ -268,7 +180,7 @@ begin
   end if;
 
   if usage_count > 0 then
-    raise exception 'Esta opção está sendo usada em % registro(s)', usage_count;
+    raise exception 'Esta opcao esta sendo usada em % registro(s)', usage_count;
   end if;
 
   delete from public.option_values
