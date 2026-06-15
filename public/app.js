@@ -12,8 +12,7 @@ const state = {
   options: {},
   collections: {},
   selectedDate: new Date().toISOString().slice(0, 10),
-  generatedMessage: "",
-  settingsSection: "openai"
+  settingsSection: "leads"
 };
 
 const icons = {
@@ -23,7 +22,6 @@ const icons = {
   alert: '<path d="M10.3 2.86 1.82 17a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 2.86a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>',
   message: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/>',
   check: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
-  marketing: '<path d="m3 11 18-5v12L3 14z"/><path d="M11.6 16.4 13 21H8l-1.5-6M21 10v4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
@@ -35,7 +33,6 @@ const icons = {
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2.1Z"/>',
-  spark: '<path d="m12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5Z"/><path d="m19 15-.8 2.2L16 18l2.2.8L19 21l.8-2.2L22 18l-2.2-.8Z"/><path d="m5 2-.7 2.3L2 5l2.3.7L5 8l.7-2.3L8 5l-2.3-.7Z"/>',
   money: '<circle cx="12" cy="12" r="9"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 6v12"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -53,7 +50,6 @@ const navItems = [
   ["pending", "Pendências", "alert"],
   ["followup", "Follow-up", "message"],
   ["tasks", "Tarefas", "check"],
-  ["marketing", "Marketing", "marketing"],
   ["settings", "Configurações", "settings"]
 ];
 
@@ -65,8 +61,7 @@ const viewInfo = {
   pending: { title: "Pendências", kicker: "Documentos e retornos", action: "Nova pendência", entity: "pending" },
   followup: { title: "Follow-up", kicker: "Relacionamento com clientes", action: "Criar mensagem", entity: null },
   tasks: { title: "Tarefas", kicker: "Organização do trabalho", action: "Nova tarefa", entity: "tasks" },
-  marketing: { title: "Marketing", kicker: "Campanhas e ações", action: "Nova ação", entity: "marketing" },
-  settings: { title: "Configurações", kicker: "Personalização e integrações", action: "", entity: null }
+  settings: { title: "Configurações", kicker: "Personalização do CRM", action: "", entity: null }
 };
 
 function icon(name) {
@@ -237,7 +232,6 @@ async function navigate(view) {
       pending: renderPending,
       followup: renderFollowup,
       tasks: renderTasks,
-      marketing: renderMarketing,
       settings: renderSettings
     };
     await renderers[view]();
@@ -633,40 +627,6 @@ function renderTasksTable(items) {
   </table></div>`;
 }
 
-async function renderMarketing() {
-  const items = await api("/api/marketing");
-  state.collections.marketing = items;
-  $("#content").innerHTML = `
-    <div class="section-toolbar">
-      <div class="filter-group">
-        <div class="search-field">${icon("search")}<input id="marketing-search" placeholder="Buscar ação de marketing" /></div>
-        <select id="marketing-filter" class="filter-select"><option value="">Todos os status</option><option>Planejada</option><option>Em andamento</option><option>Concluída</option><option>Cancelada</option></select>
-      </div>
-      <span class="muted" style="font-size:11px">${items.length} ação(ões)</span>
-    </div>
-    <div id="marketing-list">${renderMarketingCards(items)}</div>
-  `;
-  const apply = () => {
-    const term = $("#marketing-search").value.toLowerCase();
-    const status = $("#marketing-filter").value;
-    $("#marketing-list").innerHTML = renderMarketingCards(items.filter((item) => `${item.title} ${item.type || ""} ${item.description || ""}`.toLowerCase().includes(term) && (!status || item.status === status)));
-  };
-  $("#marketing-search").addEventListener("input", apply);
-  $("#marketing-filter").addEventListener("change", apply);
-}
-
-function renderMarketingCards(items) {
-  if (!items.length) return emptyState("Nenhuma ação de marketing", "Planeje campanhas, publicações, eventos e outras ações.", "marketing", "marketing");
-  return `<div class="cards-grid">${items.map((item) => `<article class="marketing-card">
-    <div class="card-top">
-      <div>${badge(item.status)}<h3>${escapeHtml(item.title)}</h3><div class="card-meta"><span>${escapeHtml(item.type || "Ação")}</span><span>Prazo: ${formatDate(item.deadline)}</span></div></div>
-      <div class="actions"><button class="icon-button" data-edit="marketing" data-id="${item.id}">${icon("edit")}</button><button class="icon-button" data-delete="marketing" data-id="${item.id}">${icon("trash")}</button></div>
-    </div>
-    <p class="card-description">${escapeHtml(item.description || "Sem descrição.")}</p>
-    <div class="card-footer"><span class="muted" style="font-size:9px">Criada em ${formatDateTime(item.created_at)}</span>${icon("marketing")}</div>
-  </article>`).join("")}</div>`;
-}
-
 async function renderFollowup(preselectedLead = null) {
   const [leads, history] = await Promise.all([ensureLeads(), api("/api/followups")]);
   state.collections.followups = history;
@@ -675,16 +635,10 @@ async function renderFollowup(preselectedLead = null) {
   $("#content").innerHTML = `
     <section class="followup-layout">
       <div class="panel followup-builder">
-        <div class="panel-header"><div><h3>Assistente de mensagem</h3><p>Crie um texto personalizado para o cliente</p></div><span class="stat-icon">${icon("spark")}</span></div>
+        <div class="panel-header"><div><h3>Mensagem para o cliente</h3><p>Escreva, salve e envie pelo WhatsApp</p></div><span class="stat-icon">${icon("message")}</span></div>
         ${leads.length ? `<div class="form-stack">
           <label><span>Cliente</span><select id="followup-lead">${leads.map((lead) => `<option value="${lead.id}" ${sameId(selected, lead.id) ? "selected" : ""}>${escapeHtml(lead.name)} · ${escapeHtml(lead.status)}</option>`).join("")}</select></label>
-          <div class="form-row">
-            <label><span>Tom da mensagem</span><select id="followup-tone"><option>Profissional</option><option>Amigável</option><option>Direto</option></select></label>
-            <label><span>Contexto</span><input id="followup-context" placeholder="Ex.: proposta enviada" /></label>
-          </div>
-          <button class="button button-primary" id="generate-message">${icon("spark")} Sugerir mensagem</button>
-          <label><span>Mensagem</span><textarea id="followup-message" placeholder="A sugestão aparecerá aqui.">${escapeHtml(state.generatedMessage)}</textarea></label>
-          <small id="suggestion-source" class="muted">A mensagem pode ser revisada antes do envio.</small>
+          <label><span>Mensagem</span><textarea id="followup-message" placeholder="Digite a mensagem para o cliente."></textarea></label>
           <div class="button-row">
             <button class="button button-secondary" id="copy-message">${icon("copy")} Copiar</button>
             <button class="button button-secondary" id="save-followup">${icon("check")} Salvar histórico</button>
@@ -706,48 +660,8 @@ async function renderFollowup(preselectedLead = null) {
 }
 
 function bindFollowupEvents() {
-  const generate = $("#generate-message");
-  if (!generate) return;
+  if (!$("#followup-lead")) return;
   $("#followup-lead").addEventListener("change", (event) => { state.followupLead = event.target.value; });
-  generate.addEventListener("click", async () => {
-    generate.disabled = true;
-    generate.innerHTML = '<span class="spinner" style="width:16px;height:16px;margin:0"></span> Criando...';
-    try {
-      const result = await api("/api/followups/suggest", {
-        method: "POST",
-        body: JSON.stringify({
-          lead_id: $("#followup-lead").value,
-          tone: $("#followup-tone").value,
-          context: $("#followup-context").value
-        })
-      });
-      state.generatedMessage = result.message;
-      $("#followup-message").value = result.message;
-      const source = $("#suggestion-source");
-      if (result.source === "openai") {
-        source.className = "suggestion-notice success";
-        source.textContent = `Sugestão criada com OpenAI (${result.model}). Revise antes de enviar.`;
-      } else if (result.warningCode === "openai_quota") {
-        source.className = "suggestion-notice warning";
-        source.innerHTML = `
-          <strong>Créditos da API esgotados.</strong>
-          Foi usada a sugestão local. Adicione saldo ou aumente o limite da API e tente novamente.
-          <a href="${result.actionUrl}" target="_blank" rel="noopener noreferrer">Abrir faturamento da OpenAI</a>
-        `;
-      } else if (result.warning) {
-        source.className = "suggestion-notice warning";
-        source.textContent = `Foi usada a sugestão local. ${result.warning}`;
-      } else {
-        source.className = "suggestion-notice";
-        source.textContent = "Sugestão inteligente local. Configure a OpenAI em Configurações para usar a API.";
-      }
-    } catch (error) {
-      showToast(error.message, "error");
-    } finally {
-      generate.disabled = false;
-      generate.innerHTML = `${icon("spark")} Sugerir mensagem`;
-    }
-  });
   $("#copy-message").addEventListener("click", async () => {
     const text = $("#followup-message").value.trim();
     if (!text) return showToast("Crie uma mensagem primeiro.", "error");
@@ -759,7 +673,6 @@ function bindFollowupEvents() {
     if (!text) return showToast("Crie uma mensagem primeiro.", "error");
     try {
       await api("/api/followups", { method: "POST", body: JSON.stringify({ lead_id: $("#followup-lead").value, message: text, status: "Rascunho", channel: "WhatsApp" }) });
-      state.generatedMessage = "";
       showToast("Follow-up salvo no histórico.");
       await renderFollowup($("#followup-lead").value);
     } catch (error) {
@@ -791,14 +704,13 @@ const optionGroups = [
 ];
 
 const settingsSections = [
-  ["openai", "OpenAI", "Inteligência para follow-up", "spark"],
   ["leads", "Leads", "Origens e etapas do Kanban", "users"],
   ["pending", "Pendências", "Tipos e status", "alert"],
   ["tasks", "Tarefas", "Tipos, categorias e status", "check"]
 ];
 
 async function renderSettings() {
-  const [options, settings] = await Promise.all([ensureOptions(true), api("/api/settings")]);
+  const options = await ensureOptions(true);
   state.options = options;
   $("#content").innerHTML = `
     <section class="settings-layout">
@@ -818,7 +730,7 @@ async function renderSettings() {
         </nav>
       </aside>
       <div class="settings-content">
-        ${renderSettingsSection(settings)}
+        ${renderSettingsSection()}
       </div>
     </section>
   `;
@@ -831,43 +743,7 @@ async function renderSettings() {
   bindSettingsEvents();
 }
 
-function renderSettingsSection(settings) {
-  if (state.settingsSection === "openai") {
-    const netlifyManaged = settings.openai.managedByNetlify;
-    return `<div class="panel settings-openai">
-      <div class="panel-header">
-        <div><span class="settings-module">Integração</span><h3>OpenAI</h3><p>Use inteligência artificial nas mensagens de follow-up</p></div>
-        ${settings.openai.configured ? badge("Conectada") : badge("Não configurada")}
-      </div>
-      <form id="openai-settings-form" class="form-stack">
-        ${netlifyManaged ? `
-        <div class="integration-managed">
-          <strong>Chave protegida pela Netlify</strong>
-          <p>A chave não aparece no navegador. Configure <code>OPENAI_API_KEY</code> em Site configuration → Environment variables.</p>
-        </div>` : `<label>
-          <span>Chave da API</span>
-          <div class="password-wrap">
-            <input id="openai-api-key" name="apiKey" type="password" autocomplete="off" placeholder="${settings.openai.configured ? settings.openai.apiKeyMasked : "sk-..."}" />
-            <button id="toggle-openai-key" class="icon-button" type="button" aria-label="Mostrar chave">${icon("eye")}</button>
-          </div>
-          <small class="muted">${settings.openai.configured ? "Uma chave está salva. Digite outra somente para substituir." : "A chave será criptografada e salva neste computador."}</small>
-        </label>`}
-        <label>
-          <span>Modelo</span>
-          <input id="openai-model" name="model" value="${escapeHtml(settings.openai.model)}" placeholder="gpt-5.4-mini" />
-          <small class="muted"><strong>gpt-5.4-mini</strong> é recomendado para economizar créditos.</small>
-        </label>
-        <div class="button-row">
-          <button class="button button-primary" type="submit">${icon("check")} Salvar</button>
-          <button class="button button-secondary" type="button" id="test-openai">${icon("spark")} Testar</button>
-          <button class="button button-secondary" type="button" id="use-economy-model">Modelo econômico</button>
-          ${settings.openai.configured && !netlifyManaged ? `<button class="button button-danger" type="button" id="remove-openai-key">${icon("trash")} Remover chave</button>` : ""}
-        </div>
-        <p id="openai-result" class="integration-result"></p>
-      </form>
-    </div>`;
-  }
-
+function renderSettingsSection() {
   const groups = optionGroups.filter(([group]) => group.startsWith(`${state.settingsSection}.`));
   const section = settingsSections.find(([id]) => id === state.settingsSection);
   return `
@@ -901,71 +777,6 @@ function renderOptionGroup(group, module, title, description) {
 }
 
 function bindSettingsEvents() {
-  const form = $("#openai-settings-form");
-  $("#toggle-openai-key")?.addEventListener("click", () => {
-    const input = $("#openai-api-key");
-    input.type = input.type === "password" ? "text" : "password";
-    $("#toggle-openai-key").innerHTML = icon(input.type === "password" ? "eye" : "eyeOff");
-  });
-  $("#use-economy-model")?.addEventListener("click", () => {
-    $("#openai-model").value = "gpt-5.4-mini";
-    showToast("Modelo econômico selecionado. Clique em Salvar integração.");
-  });
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const button = event.submitter;
-    button.disabled = true;
-    try {
-      await api("/api/settings/openai", {
-        method: "PUT",
-        body: JSON.stringify({
-          apiKey: $("#openai-api-key")?.value || "",
-          model: $("#openai-model").value
-        })
-      });
-      showToast("Integração com OpenAI salva.");
-      await renderSettings();
-    } catch (error) {
-      showToast(error.message, "error");
-      button.disabled = false;
-    }
-  });
-  $("#test-openai")?.addEventListener("click", async () => {
-    const button = $("#test-openai");
-    const result = $("#openai-result");
-    button.disabled = true;
-    result.className = "integration-result";
-    result.textContent = "Testando conexão...";
-    try {
-      const data = await api("/api/settings/openai/test", {
-        method: "POST",
-        body: JSON.stringify({
-          apiKey: $("#openai-api-key")?.value || "",
-          model: $("#openai-model").value
-        })
-      });
-      result.className = "integration-result success";
-      result.textContent = `Conexão aprovada com ${data.model}.`;
-    } catch (error) {
-      result.className = "integration-result error";
-      if (error.code === "openai_quota") {
-        result.innerHTML = `Créditos da API esgotados ou limite mensal atingido. <a href="${error.actionUrl}" target="_blank" rel="noopener noreferrer">Abrir faturamento da OpenAI</a>.`;
-      } else {
-        result.textContent = error.message;
-      }
-    } finally {
-      button.disabled = false;
-    }
-  });
-  $("#remove-openai-key")?.addEventListener("click", async () => {
-    if (!window.confirm("Remover a chave da OpenAI salva neste computador?")) return;
-    await api("/api/settings/openai", {
-      method: "PUT",
-      body: JSON.stringify({ model: $("#openai-model").value, removeKey: true })
-    });
-    showToast("Chave da OpenAI removida.");
-    await renderSettings();
-  });
   $$(".option-add-form").forEach((optionForm) => {
     optionForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1038,17 +849,6 @@ const schemas = {
       ["priority", "Prioridade", "option", true, "tasks.priority"],
       ["status", "Status", "option", true, "tasks.status"],
       ["notes", "Observação", "textarea", false, null, "full"]
-    ]
-  },
-  marketing: {
-    title: "Ação de marketing",
-    endpoint: "marketing",
-    fields: [
-      ["title", "Título", "text", true],
-      ["type", "Tipo", "select", false, ["Postagem", "Campanha", "Anúncio", "Evento", "E-mail", "Parceria", "Outro"]],
-      ["status", "Status", "select", true, ["Planejada", "Em andamento", "Concluída", "Cancelada"]],
-      ["deadline", "Prazo", "date"],
-      ["description", "Descrição", "textarea", false, null, "full"]
     ]
   }
 };
@@ -1343,7 +1143,7 @@ if (isSupabaseConfigured) {
   usernameInput.type = "email";
   usernameInput.autocomplete = "email";
   usernameInput.placeholder = "Digite o e-mail cadastrado no Supabase";
-  $("#login-help").innerHTML = "Use o usuário criado em <strong>Supabase → Authentication → Users</strong>.";
+  $("#login-help").textContent = "";
 } else if (hasMissingProductionConfig) {
   $("#login-error").textContent = "O Supabase não foi configurado neste deploy.";
   $("#login-help").innerHTML =

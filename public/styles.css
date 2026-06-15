@@ -563,8 +563,7 @@ textarea {
 .stat-card,
 .panel,
 .data-card,
-.agenda-card,
-.marketing-card {
+.agenda-card {
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -1091,8 +1090,7 @@ textarea {
   gap: 14px;
 }
 
-.data-card,
-.marketing-card {
+.data-card {
   padding: 18px;
   border-radius: 14px;
 }
@@ -1589,23 +1587,6 @@ textarea {
   min-width: 0;
 }
 
-.settings-openai {
-  max-width: 680px;
-  border-color: #badbd2;
-  background:
-    radial-gradient(circle at 93% 10%, rgba(200, 232, 92, 0.17), transparent 28%),
-    white;
-}
-
-.settings-openai .form-stack {
-  max-width: 580px;
-}
-
-.settings-openai small {
-  font-weight: 400;
-  line-height: 1.5;
-}
-
 .settings-section-header {
   padding: 5px 2px 14px;
 }
@@ -1668,84 +1649,6 @@ textarea {
   grid-template-columns: 1fr auto;
   gap: 8px;
   border-top: 1px solid var(--line);
-}
-
-.integration-result {
-  min-height: 18px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.integration-managed {
-  padding: 13px 15px;
-  border: 1px solid #badbd2;
-  border-radius: 11px;
-  color: var(--forest);
-  background: #eff8f5;
-}
-
-.integration-managed strong,
-.integration-managed p {
-  display: block;
-}
-
-.integration-managed strong {
-  font-size: 12px;
-}
-
-.integration-managed p {
-  margin: 5px 0 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.integration-managed code {
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: white;
-}
-
-.integration-result.success {
-  color: #28735f;
-}
-
-.integration-result.error {
-  color: #a84848;
-}
-
-.integration-result a,
-.suggestion-notice a {
-  color: inherit;
-  font-weight: 800;
-  text-decoration: underline;
-}
-
-.suggestion-notice {
-  display: block;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.suggestion-notice.success {
-  color: #28735f;
-}
-
-.suggestion-notice.warning {
-  padding: 10px 12px;
-  border: 1px solid #efd39f;
-  border-radius: 9px;
-  color: #805d24;
-  background: #fff8e9;
-}
-
-.suggestion-notice strong {
-  display: block;
-  margin-bottom: 2px;
 }
 
 @keyframes spin {

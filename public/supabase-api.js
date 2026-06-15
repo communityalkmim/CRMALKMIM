@@ -20,7 +20,6 @@ const entityConfig = {
   appointments: { table: "appointments" },
   pending: { table: "pending_items" },
   tasks: { table: "tasks" },
-  marketing: { table: "marketing" },
   followups: { table: "followups" }
 };
 
@@ -201,74 +200,6 @@ async function createOption(body) {
   return { id: data.id };
 }
 
-async function callFunction(payload) {
-  const client = await getClient();
-  const { data: sessionData } = await client.auth.getSession();
-  const token = sessionData.session?.access_token;
-  if (!token) throw new Error("Sessão expirada. Entre novamente.");
-  const response = await fetch("/.netlify/functions/openai", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data.error || "Falha na função da Netlify.");
-    error.code = data.code || "";
-    error.actionUrl = data.actionUrl || "";
-    throw error;
-  }
-  return data;
-}
-
-async function getSettings() {
-  const client = await getClient();
-  const { data, error } = await client
-    .from("app_settings")
-    .select("value")
-    .eq("key", "openai_model")
-    .maybeSingle();
-  if (error) throw apiError(error);
-  let status = { configured: false };
-  try {
-    status = await callFunction({ action: "status" });
-  } catch {}
-  return {
-    openai: {
-      configured: Boolean(status.configured),
-      managedByNetlify: true,
-      apiKeyMasked: status.configured ? "Configurada na Netlify" : "",
-      model: data?.value || status.model || "gpt-5.4-mini"
-    }
-  };
-}
-
-async function getSavedModel() {
-  const client = await getClient();
-  const { data, error } = await client
-    .from("app_settings")
-    .select("value")
-    .eq("key", "openai_model")
-    .maybeSingle();
-  if (error) throw apiError(error);
-  return data?.value || "gpt-5.4-mini";
-}
-
-async function saveSettings(body) {
-  const client = await getClient();
-  const user = await getAuthUser();
-  const model = String(body.model || "gpt-5.4-mini").trim();
-  const { error } = await client.from("app_settings").upsert(
-    { user_id: user.id, key: "openai_model", value: model, updated_at: new Date().toISOString() },
-    { onConflict: "user_id,key" }
-  );
-  if (error) throw apiError(error);
-  return getSettings();
-}
-
 async function dashboardData() {
   const [leads, pending, tasks, appointments, options] = await Promise.all([
     selectEntity("leads"),
@@ -360,22 +291,7 @@ export async function supabaseApi(path, options = {}) {
     return { ok: true };
   }
 
-  if (path === "/api/settings" && method === "GET") return getSettings();
-  if (path === "/api/settings/openai" && method === "PUT") return saveSettings(body);
-  if (path === "/api/settings/openai/test" && method === "POST") {
-    return callFunction({ action: "test", model: body.model });
-  }
-  if (path === "/api/followups/suggest" && method === "POST") {
-    return callFunction({
-      action: "suggest",
-      lead_id: body.lead_id,
-      context: body.context,
-      tone: body.tone,
-      model: await getSavedModel()
-    });
-  }
-
-  const entityMatch = path.match(/^\/api\/(leads|appointments|pending|tasks|marketing|followups)(?:\/([^/]+))?$/);
+  const entityMatch = path.match(/^\/api\/(leads|appointments|pending|tasks|followups)(?:\/([^/]+))?$/);
   if (!entityMatch) throw new Error("Rota não encontrada.");
   const [, entity, id] = entityMatch;
   if (method === "GET" && !id) return selectEntity(entity);
