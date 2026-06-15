@@ -94,9 +94,6 @@ await insert("tasks", withLead(all(`
   SELECT title, type, category, lead_id, date, time, priority, status, notes, created_at
   FROM tasks
 `)));
-await insert("marketing", all(`
-  SELECT title, type, status, deadline, description, created_at FROM marketing
-`).map((row) => ({ ...row, user_id: userId })));
 await insert("followups", withLead(all(`
   SELECT lead_id, message, channel, status, scheduled_at, sent_at, created_at
   FROM followups
@@ -104,15 +101,6 @@ await insert("followups", withLead(all(`
 await insert("option_values", all(`
   SELECT module, field, value, sort_order, created_at FROM option_values
 `).map((row) => ({ ...row, user_id: userId })), "user_id,module,field,value");
-
-const model = db.prepare(
-  "SELECT value FROM app_settings WHERE key = 'openai_model'"
-).get()?.value || "gpt-5.4-mini";
-await insert("app_settings", [{
-  user_id: userId,
-  key: "openai_model",
-  value: model
-}], "user_id,key");
 
 db.close();
 console.log(`Migração concluída. Leads migrados: ${leads.length}`);
