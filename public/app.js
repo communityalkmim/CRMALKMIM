@@ -1142,7 +1142,7 @@ if (isSupabaseConfigured) {
   const usernameInput = $('#login-form input[name="username"]');
   usernameInput.type = "email";
   usernameInput.autocomplete = "email";
-  usernameInput.placeholder = "Digite o e-mail cadastrado no Supabase";
+  usernameInput.placeholder = "Digite o e-mail de usuário";
   $("#login-help").textContent = "";
 } else if (hasMissingProductionConfig) {
   $("#login-error").textContent = "O Supabase não foi configurado neste deploy.";
