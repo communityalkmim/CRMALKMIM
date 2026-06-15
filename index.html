@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#173f3a" />
+    <title>Maikon CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <section id="login-screen" class="login-screen">
+      <div class="login-visual">
+        <div class="brand brand-light">
+          <span class="brand-mark">M</span>
+          <span>Maikon CRM</span>
+        </div>
+        <div class="login-copy">
+          <span class="eyebrow">Seu negócio em movimento</span>
+          <h1>Organize contatos.<br />Cultive resultados.</h1>
+          <p>Uma visão clara do seu dia, dos seus clientes e de cada oportunidade.</p>
+        </div>
+        <div class="visual-card">
+          <div class="visual-card-top">
+            <span>Visão da semana</span>
+            <span class="status-dot">Tudo em dia</span>
+          </div>
+          <div class="mini-bars">
+            <i style="height: 30%"></i><i style="height: 55%"></i><i style="height: 42%"></i>
+            <i style="height: 80%"></i><i style="height: 65%"></i><i style="height: 90%"></i>
+            <i style="height: 72%"></i>
+          </div>
+        </div>
+      </div>
+      <div class="login-panel">
+        <form id="login-form" class="login-card">
+          <div class="mobile-brand">
+            <span class="brand-mark">M</span>
+            <span>Maikon CRM</span>
+          </div>
+          <div>
+            <span class="eyebrow eyebrow-dark">Bem-vindo</span>
+            <h2>Acesse sua conta</h2>
+            <p class="muted">Entre para acompanhar seus leads e compromissos.</p>
+          </div>
+          <label>
+            <span id="login-label">Login</span>
+            <input name="username" autocomplete="username" placeholder="Digite seu login" required />
+          </label>
+          <label>
+            <span>Senha</span>
+            <div class="password-wrap">
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required />
+              <button id="toggle-password" class="icon-button" type="button" aria-label="Mostrar senha"></button>
+            </div>
+          </label>
+          <p id="login-error" class="form-error" role="alert"></p>
+          <button class="button button-primary button-large" type="submit">
+            Entrar no CRM
+            <span aria-hidden="true">→</span>
+          </button>
+          <p id="login-help" class="login-help">Acesso inicial: <strong>MAIKONSAUDE</strong> / <strong>ABC123</strong></p>
+        </form>
+      </div>
+    </section>
+
+    <div id="app" class="app" hidden>
+      <aside id="sidebar" class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">M</span>
+          <span>Maikon CRM</span>
+        </div>
+        <nav id="main-nav" class="main-nav" aria-label="Navegação principal"></nav>
+        <div class="sidebar-footer">
+          <div class="user-card">
+            <div class="avatar">MS</div>
+            <div>
+              <strong id="sidebar-user">Maikon</strong>
+              <span>Administrador</span>
+            </div>
+            <button id="logout-button" class="icon-button icon-button-light" title="Sair" aria-label="Sair"></button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="page-shell">
+        <header class="topbar">
+          <button id="menu-button" class="icon-button menu-button" aria-label="Abrir menu"></button>
+          <div>
+            <p id="page-kicker" class="page-kicker">Visão geral</p>
+            <h1 id="page-title">Painel</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="today-chip" id="today-chip"></div>
+            <button id="primary-action" class="button button-primary"></button>
+          </div>
+        </header>
+        <main id="content" class="content" tabindex="-1"></main>
+      </div>
+      <button id="sidebar-overlay" class="sidebar-overlay" aria-label="Fechar menu"></button>
+    </div>
+
+    <div id="modal" class="modal" hidden>
+      <button class="modal-backdrop" data-close-modal aria-label="Fechar"></button>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <header class="modal-header">
+          <div>
+            <span class="eyebrow eyebrow-dark">Cadastro</span>
+            <h2 id="modal-title"></h2>
+          </div>
+          <button class="icon-button" data-close-modal aria-label="Fechar"></button>
+        </header>
+        <div id="modal-body"></div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/env.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

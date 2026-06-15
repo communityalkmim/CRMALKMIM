@@ -1,0 +1,1362 @@
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js";
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const hasMissingProductionConfig = !isLocalHost && !isSupabaseConfigured;
+
+const state = {
+  user: null,
+  view: "dashboard",
+  leads: [],
+  options: {},
+  collections: {},
+  selectedDate: new Date().toISOString().slice(0, 10),
+  generatedMessage: "",
+  settingsSection: "openai"
+};
+
+const icons = {
+  dashboard: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  alert: '<path d="M10.3 2.86 1.82 17a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 2.86a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>',
+  message: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/>',
+  check: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  marketing: '<path d="m3 11 18-5v12L3 14z"/><path d="M11.6 16.4 13 21H8l-1.5-6M21 10v4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A10.7 10.7 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.1 3.2M6.6 6.6C3.5 8.6 2 12 2 12s3.5 8 10 8c1.7 0 3.2-.5 4.5-1.2"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2.1Z"/>',
+  spark: '<path d="m12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5Z"/><path d="m19 15-.8 2.2L16 18l2.2.8L19 21l.8-2.2L22 18l-2.2-.8Z"/><path d="m5 2-.7 2.3L2 5l2.3.7L5 8l.7-2.3L8 5l-2.3-.7Z"/>',
+  money: '<circle cx="12" cy="12" r="9"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 6v12"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M13.7 21h-3.4"/>',
+  kanban: '<rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>'
+};
+
+const navItems = [
+  ["dashboard", "Painel", "dashboard"],
+  ["day", "Meu dia", "calendar"],
+  ["leads", "Leads", "users"],
+  ["kanban", "Kanban", "kanban"],
+  ["pending", "Pendências", "alert"],
+  ["followup", "Follow-up", "message"],
+  ["tasks", "Tarefas", "check"],
+  ["marketing", "Marketing", "marketing"],
+  ["settings", "Configurações", "settings"]
+];
+
+const viewInfo = {
+  dashboard: { title: "Painel", kicker: "Visão geral", action: "Novo lead", entity: "leads" },
+  day: { title: "Meu dia", kicker: "Agenda e lembretes", action: "Novo compromisso", entity: "appointments" },
+  leads: { title: "Leads", kicker: "Gestão comercial", action: "Novo lead", entity: "leads" },
+  kanban: { title: "Kanban", kicker: "Fluxo comercial", action: "Novo lead", entity: "leads" },
+  pending: { title: "Pendências", kicker: "Documentos e retornos", action: "Nova pendência", entity: "pending" },
+  followup: { title: "Follow-up", kicker: "Relacionamento com clientes", action: "Criar mensagem", entity: null },
+  tasks: { title: "Tarefas", kicker: "Organização do trabalho", action: "Nova tarefa", entity: "tasks" },
+  marketing: { title: "Marketing", kicker: "Campanhas e ações", action: "Nova ação", entity: "marketing" },
+  settings: { title: "Configurações", kicker: "Personalização e integrações", action: "", entity: null }
+};
+
+function icon(name) {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.check}</svg>`;
+}
+
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function initials(name = "") {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "--";
+}
+
+function sameId(left, right) {
+  return String(left) === String(right);
+}
+
+function formatDate(value, options = {}) {
+  if (!value) return "Sem data";
+  const date = new Date(`${value}T12:00:00`);
+  return new Intl.DateTimeFormat("pt-BR", options.year ? options : { day: "2-digit", month: "short" }).format(date);
+}
+
+function formatDateTime(value) {
+  if (!value) return "Agora";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
+  }).format(new Date(value.replace(" ", "T") + (value.includes("Z") ? "" : "Z")));
+}
+
+function compactCalendarDate(date, time = "") {
+  return `${String(date || "").replaceAll("-", "")}${time ? `T${String(time).replace(":", "")}00` : ""}`;
+}
+
+function addMinutesToTask(date, time, minutes) {
+  const value = new Date(`${date}T${time}:00`);
+  value.setMinutes(value.getMinutes() + minutes);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hour = String(value.getHours()).padStart(2, "0");
+  const minute = String(value.getMinutes()).padStart(2, "0");
+  return `${year}${month}${day}T${hour}${minute}00`;
+}
+
+function nextCalendarDay(date) {
+  const value = new Date(`${date}T12:00:00`);
+  value.setDate(value.getDate() + 1);
+  return `${value.getFullYear()}${String(value.getMonth() + 1).padStart(2, "0")}${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function googleCalendarUrl(task) {
+  const start = compactCalendarDate(task.date, task.time);
+  const end = task.time ? addMinutesToTask(task.date, task.time, 60) : nextCalendarDay(task.date);
+  const details = [
+    task.notes,
+    task.lead_name ? `Cliente: ${task.lead_name}` : "",
+    task.type ? `Tipo: ${task.type}` : "",
+    task.category ? `Categoria: ${task.category}` : "",
+    task.priority ? `Prioridade: ${task.priority}` : ""
+  ].filter(Boolean).join("\n");
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: task.title,
+    dates: `${start}/${end}`,
+    details,
+    ctz: "America/Sao_Paulo"
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function currency(value) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function badge(status = "") {
+  const value = status || "Não informado";
+  const green = ["Fechado", "Convertido", "Concluída", "Concluído", "Ativa", "Enviado"];
+  const red = ["Perdido", "Cancelada", "Atrasada", "Alta"];
+  const blue = ["Novo", "Em contato", "Em andamento", "Agendada"];
+  const cls = green.includes(value) ? "badge-green" : red.includes(value) ? "badge-red" : blue.includes(value) ? "badge-blue" : "badge-yellow";
+  return `<span class="badge ${cls}">${escapeHtml(value)}</span>`;
+}
+
+function priority(value = "Média") {
+  const colors = { Alta: "#df6969", Média: "#e3aa48", Baixa: "#65a994" };
+  return `<span class="priority" style="--priority-color:${colors[value] || colors.Média}">${escapeHtml(value)}</span>`;
+}
+
+async function api(path, options = {}) {
+  if (isSupabaseConfigured) {
+    try {
+      return await supabaseApi(path, options);
+    } catch (error) {
+      if (path !== "/api/login" && /sessão|session|jwt/i.test(error.message)) showLogin();
+      throw error;
+    }
+  }
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options
+  });
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {}
+  if (response.status === 401 && path !== "/api/login") {
+    showLogin();
+    throw new Error(data.error || "Sua sessão expirou.");
+  }
+  if (!response.ok) {
+    const error = new Error(data.error || "Não foi possível concluir a operação.");
+    error.code = data.code || "";
+    error.actionUrl = data.actionUrl || "";
+    throw error;
+  }
+  return data;
+}
+
+function showToast(message, type = "success") {
+  const toast = $("#toast");
+  toast.textContent = message;
+  toast.className = `toast show ${type === "error" ? "error" : ""}`;
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => { toast.className = "toast"; }, 3200);
+}
+
+function loading() {
+  $("#content").innerHTML = '<div class="loading"><div><div class="spinner"></div>Carregando informações...</div></div>';
+}
+
+function renderNav() {
+  $("#main-nav").innerHTML = navItems.map(([id, label, iconName]) => `
+    <button class="nav-item ${state.view === id ? "active" : ""}" data-view="${id}">
+      <span class="nav-icon">${icon(iconName)}</span>
+      <span>${label}</span>
+    </button>
+  `).join("");
+}
+
+function updateHeader() {
+  const info = viewInfo[state.view];
+  $("#page-title").textContent = info.title;
+  $("#page-kicker").textContent = info.kicker;
+  const action = $("#primary-action");
+  action.innerHTML = info.action ? `${icon("plus")}<span>${info.action}</span>` : "";
+  action.hidden = !info.action;
+}
+
+async function navigate(view) {
+  state.view = view;
+  renderNav();
+  updateHeader();
+  $("#app").classList.remove("sidebar-open");
+  loading();
+  try {
+    const renderers = {
+      dashboard: renderDashboard,
+      day: renderDay,
+      leads: renderLeads,
+      kanban: renderKanban,
+      pending: renderPending,
+      followup: renderFollowup,
+      tasks: renderTasks,
+      marketing: renderMarketing,
+      settings: renderSettings
+    };
+    await renderers[view]();
+    $("#content").focus();
+  } catch (error) {
+    $("#content").innerHTML = `<div class="empty-state"><div><h3>Algo não saiu como esperado</h3><p>${escapeHtml(error.message)}</p><button class="button button-secondary" data-retry>Carregar novamente</button></div></div>`;
+  }
+}
+
+async function ensureLeads(refresh = false) {
+  if (refresh || !state.leads.length) state.leads = await api("/api/leads");
+  return state.leads;
+}
+
+async function ensureOptions(refresh = false) {
+  if (refresh || !Object.keys(state.options).length) state.options = await api("/api/options");
+  return state.options;
+}
+
+function optionValues(group) {
+  return (state.options[group] || []).map((item) => item.value);
+}
+
+function terminalOption(group, fallback) {
+  return optionValues(group).at(-1) || fallback;
+}
+
+function emptyState(title, description, entity, iconName = "plus") {
+  return `<div class="empty-state"><div>
+    <div class="empty-icon">${icon(iconName)}</div>
+    <h3>${title}</h3>
+    <p>${description}</p>
+    ${entity ? `<button class="button button-primary" data-new="${entity}">${icon("plus")} Adicionar agora</button>` : ""}
+  </div></div>`;
+}
+
+async function renderDashboard() {
+  const data = await api("/api/dashboard");
+  const maxFunnel = Math.max(...data.funnel.map((item) => Number(item.value)), 1);
+  const colors = ["#245c54", "#6b9fed", "#eeb85d", "#74b7a8", "#e67979", "#9b7bd4"];
+  $("#content").innerHTML = `
+    <div class="welcome-row">
+      <div>
+        <h2>Olá, ${escapeHtml(state.user?.name || "Maikon")}.</h2>
+        <p>Aqui está o que merece sua atenção hoje.</p>
+      </div>
+      <button class="text-button" data-view="day">Ver agenda completa ${icon("chevron")}</button>
+    </div>
+    <section class="stats-grid">
+      ${statCard("Total de leads", data.stats.leads, "Base de contatos", "users", "#d9eee8")}
+      ${statCard("Em negociação", data.stats.newLeads, "Novos e em contato", "message", "#e9f0fb")}
+      ${statCard("Pendências", data.stats.pending, "Aguardando solução", "alert", "#fff0d8")}
+      ${statCard("Tarefas hoje", data.stats.tasksToday, "Itens ainda abertos", "check", "#f2eafb")}
+      ${statCard("Comissões", currency(data.stats.commission), "Leads fechados", "money", "#e2f1c4")}
+    </section>
+    <section class="dashboard-grid">
+      <div class="panel">
+        <div class="panel-header">
+          <div><h3>Funil de oportunidades</h3><p>Distribuição atual dos seus leads</p></div>
+          <button class="text-button" data-view="leads">Gerenciar leads</button>
+        </div>
+        ${data.funnel.length ? `<div class="funnel-list">${data.funnel.map((item) => `
+          <div class="funnel-row">
+            <span>${escapeHtml(item.label)}</span>
+            <div class="progress"><span style="width:${Math.max(8, Number(item.value) / maxFunnel * 100)}%"></span></div>
+            <strong>${item.value}</strong>
+          </div>`).join("")}</div>` : emptyMini("Cadastre leads para visualizar seu funil.")}
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div><h3>Origem dos leads</h3><p>Canais que mais geram contatos</p></div></div>
+        ${data.origins.length ? `<div class="origin-list">${data.origins.map((item, index) => `
+          <div class="origin-row" style="--origin-color:${colors[index % colors.length]}">
+            <i></i><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong>
+          </div>`).join("")}</div>` : emptyMini("As origens aparecerão aqui.")}
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div><h3>Próximos compromissos</h3><p>Sua agenda em ordem cronológica</p></div>
+          <button class="text-button" data-new="appointments">Adicionar</button>
+        </div>
+        ${data.agenda.length ? `<div class="timeline">${data.agenda.map((item) => `
+          <div class="timeline-item">
+            <span class="timeline-time">${item.time || "--:--"}</span>
+            <div class="timeline-detail"><strong>${escapeHtml(item.title)}</strong><span>${formatDate(item.date)}${item.lead_name ? ` · ${escapeHtml(item.lead_name)}` : ""}</span></div>
+            ${item.done ? badge("Concluída") : badge(item.kind === "task" ? "Tarefa" : "Agenda")}
+          </div>`).join("")}</div>` : emptyMini("Nenhum compromisso futuro.")}
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div><h3>Atalhos rápidos</h3><p>Registre uma atividade sem perder tempo</p></div></div>
+        <div class="button-row">
+          <button class="button button-secondary" data-new="leads">${icon("users")} Lead</button>
+          <button class="button button-secondary" data-new="tasks">${icon("check")} Tarefa</button>
+          <button class="button button-secondary" data-new="pending">${icon("alert")} Pendência</button>
+          <button class="button button-secondary" data-view="followup">${icon("message")} Follow-up</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function statCard(label, value, note, iconName, color) {
+  return `<article class="stat-card" style="--stat-color:${color}">
+    <div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(iconName)}</span></div>
+    <strong>${value}</strong><small>${note}</small>
+  </article>`;
+}
+
+function emptyMini(text) {
+  return `<p class="muted" style="font-size:11px;margin:0">${text}</p>`;
+}
+
+async function renderDay() {
+  const appointments = await api("/api/appointments");
+  state.collections.appointments = appointments;
+  const selected = state.selectedDate;
+  const selectedItems = appointments.filter((item) => item.date === selected);
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div><strong>${formatDate(selected, { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</strong><p class="muted" style="font-size:11px;margin:4px 0 0">${selectedItems.length} compromisso(s) neste dia</p></div>
+      <button class="button button-secondary" data-today>Ir para hoje</button>
+    </div>
+    <section class="agenda-layout">
+      ${renderCalendar(selected)}
+      <div class="panel agenda-panel">
+        <div class="panel-header"><div><h3>Agenda do dia</h3><p>Compromissos e lembretes programados</p></div></div>
+        ${selectedItems.length ? `<div class="card-list">${selectedItems.map(renderAppointment).join("")}</div>` :
+          emptyState("Dia livre na agenda", "Nenhum compromisso foi cadastrado para esta data.", "appointments", "calendar")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCalendar(selected) {
+  const current = new Date(`${selected}T12:00:00`);
+  const year = current.getFullYear();
+  const month = current.getMonth();
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  const today = new Date().toISOString().slice(0, 10);
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(start);
+    day.setDate(start.getDate() + i);
+    const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    days.push(`<button class="${iso === today ? "today" : ""} ${iso === selected ? "selected" : ""} ${day.getMonth() !== month ? "outside" : ""}" data-date="${iso}">${day.getDate()}</button>`);
+  }
+  return `<aside class="mini-calendar">
+    <div class="calendar-header"><strong>${new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(current)}</strong></div>
+    <div class="calendar-grid"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span>${days.join("")}</div>
+  </aside>`;
+}
+
+function renderAppointment(item) {
+  return `<article class="agenda-card">
+    <div class="agenda-time">${escapeHtml(item.time || "--:--")}</div>
+    <i class="agenda-stripe" style="background:${item.completed ? "#65a994" : "#eeb85d"}"></i>
+    <div class="agenda-detail">
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${item.lead_name ? escapeHtml(item.lead_name) + " · " : ""}Lembrete ${item.reminder || 0} min antes${item.notes ? ` · ${escapeHtml(item.notes)}` : ""}</span>
+    </div>
+    <div class="actions">
+      <button class="icon-button" data-toggle-appointment="${item.id}" title="${item.completed ? "Reabrir" : "Concluir"}">${icon("check")}</button>
+      <button class="icon-button" data-edit="appointments" data-id="${item.id}" title="Editar">${icon("edit")}</button>
+      <button class="icon-button" data-delete="appointments" data-id="${item.id}" title="Excluir">${icon("trash")}</button>
+    </div>
+  </article>`;
+}
+
+async function renderLeads() {
+  const [leads] = await Promise.all([ensureLeads(true), ensureOptions()]);
+  state.collections.leads = leads;
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div class="filter-group">
+        <div class="search-field">${icon("search")}<input id="lead-search" placeholder="Buscar por nome, telefone ou e-mail" /></div>
+        <select id="lead-status-filter" class="filter-select">
+          <option value="">Todos os status</option>
+          ${optionValues("leads.status").map((s) => `<option>${escapeHtml(s)}</option>`).join("")}
+        </select>
+      </div>
+      <span class="muted" id="lead-count" style="font-size:11px">${leads.length} lead(s)</span>
+    </div>
+    <div id="leads-table">${renderLeadsTable(leads)}</div>
+  `;
+  const filter = () => {
+    const term = $("#lead-search").value.toLowerCase();
+    const status = $("#lead-status-filter").value;
+    const filtered = leads.filter((lead) => {
+      const haystack = `${lead.name} ${lead.phone || ""} ${lead.email || ""}`.toLowerCase();
+      return haystack.includes(term) && (!status || lead.status === status);
+    });
+    $("#leads-table").innerHTML = renderLeadsTable(filtered);
+    $("#lead-count").textContent = `${filtered.length} lead(s)`;
+  };
+  $("#lead-search").addEventListener("input", filter);
+  $("#lead-status-filter").addEventListener("change", filter);
+}
+
+function renderLeadsTable(leads) {
+  if (!leads.length) return emptyState("Nenhum lead encontrado", "Cadastre seu primeiro contato ou ajuste os filtros da busca.", "leads", "users");
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Lead</th><th>Contato</th><th>Origem</th><th>Entrada</th><th>Status</th><th>Comissão</th><th></th></tr></thead>
+    <tbody>${leads.map((lead) => `<tr>
+      <td><div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.email || "E-mail não informado")}</span></div></div></td>
+      <td>${escapeHtml(lead.phone || "-")}</td>
+      <td>${escapeHtml(lead.origin || "-")}</td>
+      <td>${formatDate(lead.entry_date)}</td>
+      <td>${badge(lead.status)}</td>
+      <td><strong>${currency(lead.commission)}</strong></td>
+      <td><div class="actions">
+        <button class="icon-button" data-followup-lead="${lead.id}" title="Criar follow-up">${icon("message")}</button>
+        <button class="icon-button" data-edit="leads" data-id="${lead.id}" title="Editar">${icon("edit")}</button>
+        <button class="icon-button" data-delete="leads" data-id="${lead.id}" title="Excluir">${icon("trash")}</button>
+      </div></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+async function renderKanban() {
+  const [leads] = await Promise.all([ensureLeads(true), ensureOptions()]);
+  state.collections.leads = leads;
+  const columns = state.options["leads.status"] || [];
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div>
+        <strong>Fluxo dos leads</strong>
+        <p class="muted" style="font-size:11px;margin:4px 0 0">Arraste os cartões para mudar o status. Edite o nome da coluna pelo lápis.</p>
+      </div>
+      <button class="button button-secondary" data-view="settings">${icon("settings")} Configurar colunas</button>
+    </div>
+    <div class="kanban-board">
+      ${columns.map((column) => {
+        const cards = leads.filter((lead) => lead.status === column.value);
+        return `<section class="kanban-column" data-kanban-status="${escapeHtml(column.value)}">
+          <header class="kanban-header">
+            <div><strong>${escapeHtml(column.value)}</strong><span>${cards.length}</span></div>
+            <button class="icon-button" data-rename-option="${column.id}" data-option-value="${escapeHtml(column.value)}" title="Renomear coluna">${icon("edit")}</button>
+          </header>
+          <div class="kanban-cards">
+            ${cards.length ? cards.map((lead) => `<article class="kanban-card" draggable="true" data-lead-id="${lead.id}">
+              <div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.origin || "Origem não informada")}</span></div></div>
+              <div class="kanban-contact">${icon("phone")} ${escapeHtml(lead.phone || "Sem telefone")}</div>
+              <footer>
+                <strong>${currency(lead.commission)}</strong>
+                <select class="kanban-move" data-kanban-move="${lead.id}" aria-label="Mover ${escapeHtml(lead.name)} para">
+                  ${columns.map((target) => `<option value="${escapeHtml(target.value)}" ${target.value === lead.status ? "selected" : ""}>${escapeHtml(target.value)}</option>`).join("")}
+                </select>
+                <button class="icon-button" data-edit="leads" data-id="${lead.id}" title="Editar">${icon("edit")}</button>
+              </footer>
+            </article>`).join("") : '<div class="kanban-empty">Arraste um lead para cá</div>'}
+          </div>
+        </section>`;
+      }).join("")}
+      <button class="kanban-add-column" data-view="settings">${icon("plus")} Nova coluna</button>
+    </div>
+  `;
+  bindKanbanEvents();
+}
+
+function bindKanbanEvents() {
+  let draggedId = null;
+  $$(".kanban-card").forEach((card) => {
+    card.addEventListener("dragstart", () => {
+      draggedId = card.dataset.leadId;
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+      $$(".kanban-column").forEach((column) => column.classList.remove("drag-over"));
+    });
+  });
+  $$(".kanban-column").forEach((column) => {
+    column.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      column.classList.add("drag-over");
+    });
+    column.addEventListener("dragleave", () => column.classList.remove("drag-over"));
+    column.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      column.classList.remove("drag-over");
+      const lead = state.leads.find((item) => sameId(item.id, draggedId));
+      const status = column.dataset.kanbanStatus;
+      if (!lead || lead.status === status) return;
+      try {
+        await api(`/api/leads/${lead.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ status })
+        });
+        state.leads = [];
+        showToast(`${lead.name} movido para ${status}.`);
+        await renderKanban();
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+  });
+  $$(".kanban-move").forEach((select) => {
+    select.addEventListener("change", async () => {
+      const lead = state.leads.find((item) => sameId(item.id, select.dataset.kanbanMove));
+      if (!lead || lead.status === select.value) return;
+      try {
+        await api(`/api/leads/${lead.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ status: select.value })
+        });
+        state.leads = [];
+        showToast(`${lead.name} movido para ${select.value}.`);
+        await renderKanban();
+      } catch (error) {
+        showToast(error.message, "error");
+        select.value = lead.status;
+      }
+    });
+  });
+}
+
+async function renderPending() {
+  await Promise.all([ensureLeads(), ensureOptions()]);
+  const items = await api("/api/pending");
+  state.collections.pending = items;
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div class="filter-group">
+        <div class="search-field">${icon("search")}<input id="pending-search" placeholder="Buscar pendência ou cliente" /></div>
+        <select id="pending-filter" class="filter-select"><option value="">Todos os status</option>${optionValues("pending.status").map((s) => `<option>${escapeHtml(s)}</option>`).join("")}</select>
+      </div>
+      <span class="muted" style="font-size:11px">${items.filter((item) => item.status !== terminalOption("pending.status", "Concluída")).length} em aberto</span>
+    </div>
+    <div id="pending-list">${renderPendingCards(items)}</div>
+  `;
+  const apply = () => {
+    const term = $("#pending-search").value.toLowerCase();
+    const status = $("#pending-filter").value;
+    const filtered = items.filter((item) => `${item.type} ${item.description || ""} ${item.lead_name}`.toLowerCase().includes(term) && (!status || item.status === status));
+    $("#pending-list").innerHTML = renderPendingCards(filtered);
+  };
+  $("#pending-search").addEventListener("input", apply);
+  $("#pending-filter").addEventListener("change", apply);
+}
+
+function renderPendingCards(items) {
+  if (!items.length) return emptyState("Nenhuma pendência", "Registre documentos, retornos e outros itens ligados aos seus leads.", "pending", "alert");
+  return `<div class="cards-grid">${items.map((item) => `<article class="data-card">
+    <div class="card-top"><div>${badge(item.status)}<h3>${escapeHtml(item.type)}</h3><div class="card-meta"><span>${escapeHtml(item.lead_name)}</span><span>${formatDate(item.due_date)}</span></div></div>
+      <div class="actions"><button class="icon-button" data-edit="pending" data-id="${item.id}">${icon("edit")}</button><button class="icon-button" data-delete="pending" data-id="${item.id}">${icon("trash")}</button></div>
+    </div>
+    <p class="card-description">${escapeHtml(item.description || "Sem observações adicionais.")}</p>
+    <div class="card-footer">${priority(item.priority)}<button class="text-button" data-followup-lead="${item.lead_id}">Contatar cliente</button></div>
+  </article>`).join("")}</div>`;
+}
+
+async function renderTasks() {
+  await Promise.all([ensureLeads(), ensureOptions()]);
+  const items = await api("/api/tasks");
+  state.collections.tasks = items;
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div class="filter-group">
+        <div class="search-field">${icon("search")}<input id="task-search" placeholder="Buscar tarefa ou cliente" /></div>
+        <select id="task-filter" class="filter-select"><option value="">Todos os status</option>${optionValues("tasks.status").map((s) => `<option>${escapeHtml(s)}</option>`).join("")}</select>
+      </div>
+      <span class="muted" style="font-size:11px">${items.filter((item) => item.status !== terminalOption("tasks.status", "Concluída")).length} tarefa(s) aberta(s)</span>
+    </div>
+    <div id="tasks-table">${renderTasksTable(items)}</div>
+  `;
+  const apply = () => {
+    const term = $("#task-search").value.toLowerCase();
+    const status = $("#task-filter").value;
+    $("#tasks-table").innerHTML = renderTasksTable(items.filter((item) => `${item.title} ${item.category || ""} ${item.lead_name || ""}`.toLowerCase().includes(term) && (!status || item.status === status)));
+  };
+  $("#task-search").addEventListener("input", apply);
+  $("#task-filter").addEventListener("change", apply);
+}
+
+function renderTasksTable(items) {
+  if (!items.length) return emptyState("Nenhuma tarefa encontrada", "Cadastre atividades com data, prioridade e cliente relacionado.", "tasks", "check");
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Tarefa</th><th>Tipo / categoria</th><th>Cliente</th><th>Data e horário</th><th>Prioridade</th><th>Status</th><th></th></tr></thead>
+    <tbody>${items.map((item) => `<tr>
+      <td><strong>${escapeHtml(item.title)}</strong><div class="muted" style="font-size:9px;margin-top:3px;max-width:220px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(item.notes || "")}</div></td>
+      <td>${escapeHtml(item.type || "-")}<br><span class="muted">${escapeHtml(item.category || "")}</span></td>
+      <td>${escapeHtml(item.lead_name || "-")}</td>
+      <td>${formatDate(item.date)} · ${escapeHtml(item.time || "--:--")}</td>
+      <td>${priority(item.priority)}</td>
+      <td>${badge(item.status)}</td>
+      <td><div class="actions">
+        <button class="icon-button google-calendar-button" data-google-calendar="${item.id}" title="Adicionar ao Google Agenda" aria-label="Adicionar ${escapeHtml(item.title)} ao Google Agenda">${icon("calendar")}</button>
+        ${item.status !== terminalOption("tasks.status", "Concluída") ? `<button class="icon-button" data-complete-task="${item.id}" title="Concluir">${icon("check")}</button>` : ""}
+        <button class="icon-button" data-edit="tasks" data-id="${item.id}">${icon("edit")}</button>
+        <button class="icon-button" data-delete="tasks" data-id="${item.id}">${icon("trash")}</button>
+      </div></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+async function renderMarketing() {
+  const items = await api("/api/marketing");
+  state.collections.marketing = items;
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div class="filter-group">
+        <div class="search-field">${icon("search")}<input id="marketing-search" placeholder="Buscar ação de marketing" /></div>
+        <select id="marketing-filter" class="filter-select"><option value="">Todos os status</option><option>Planejada</option><option>Em andamento</option><option>Concluída</option><option>Cancelada</option></select>
+      </div>
+      <span class="muted" style="font-size:11px">${items.length} ação(ões)</span>
+    </div>
+    <div id="marketing-list">${renderMarketingCards(items)}</div>
+  `;
+  const apply = () => {
+    const term = $("#marketing-search").value.toLowerCase();
+    const status = $("#marketing-filter").value;
+    $("#marketing-list").innerHTML = renderMarketingCards(items.filter((item) => `${item.title} ${item.type || ""} ${item.description || ""}`.toLowerCase().includes(term) && (!status || item.status === status)));
+  };
+  $("#marketing-search").addEventListener("input", apply);
+  $("#marketing-filter").addEventListener("change", apply);
+}
+
+function renderMarketingCards(items) {
+  if (!items.length) return emptyState("Nenhuma ação de marketing", "Planeje campanhas, publicações, eventos e outras ações.", "marketing", "marketing");
+  return `<div class="cards-grid">${items.map((item) => `<article class="marketing-card">
+    <div class="card-top">
+      <div>${badge(item.status)}<h3>${escapeHtml(item.title)}</h3><div class="card-meta"><span>${escapeHtml(item.type || "Ação")}</span><span>Prazo: ${formatDate(item.deadline)}</span></div></div>
+      <div class="actions"><button class="icon-button" data-edit="marketing" data-id="${item.id}">${icon("edit")}</button><button class="icon-button" data-delete="marketing" data-id="${item.id}">${icon("trash")}</button></div>
+    </div>
+    <p class="card-description">${escapeHtml(item.description || "Sem descrição.")}</p>
+    <div class="card-footer"><span class="muted" style="font-size:9px">Criada em ${formatDateTime(item.created_at)}</span>${icon("marketing")}</div>
+  </article>`).join("")}</div>`;
+}
+
+async function renderFollowup(preselectedLead = null) {
+  const [leads, history] = await Promise.all([ensureLeads(), api("/api/followups")]);
+  state.collections.followups = history;
+  const selected = preselectedLead || state.followupLead || leads[0]?.id || "";
+  state.followupLead = selected;
+  $("#content").innerHTML = `
+    <section class="followup-layout">
+      <div class="panel followup-builder">
+        <div class="panel-header"><div><h3>Assistente de mensagem</h3><p>Crie um texto personalizado para o cliente</p></div><span class="stat-icon">${icon("spark")}</span></div>
+        ${leads.length ? `<div class="form-stack">
+          <label><span>Cliente</span><select id="followup-lead">${leads.map((lead) => `<option value="${lead.id}" ${sameId(selected, lead.id) ? "selected" : ""}>${escapeHtml(lead.name)} · ${escapeHtml(lead.status)}</option>`).join("")}</select></label>
+          <div class="form-row">
+            <label><span>Tom da mensagem</span><select id="followup-tone"><option>Profissional</option><option>Amigável</option><option>Direto</option></select></label>
+            <label><span>Contexto</span><input id="followup-context" placeholder="Ex.: proposta enviada" /></label>
+          </div>
+          <button class="button button-primary" id="generate-message">${icon("spark")} Sugerir mensagem</button>
+          <label><span>Mensagem</span><textarea id="followup-message" placeholder="A sugestão aparecerá aqui.">${escapeHtml(state.generatedMessage)}</textarea></label>
+          <small id="suggestion-source" class="muted">A mensagem pode ser revisada antes do envio.</small>
+          <div class="button-row">
+            <button class="button button-secondary" id="copy-message">${icon("copy")} Copiar</button>
+            <button class="button button-secondary" id="save-followup">${icon("check")} Salvar histórico</button>
+            <button class="button whatsapp-button" id="send-whatsapp">${icon("send")} Abrir WhatsApp</button>
+          </div>
+        </div>` : emptyState("Cadastre um lead primeiro", "As mensagens de follow-up precisam estar ligadas a um cliente.", "leads", "users")}
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div><h3>Histórico de follow-ups</h3><p>Mensagens criadas e contatos realizados</p></div></div>
+        ${history.length ? `<div class="card-list">${history.map((item) => `<article class="history-item">
+          <div class="card-top"><div class="lead-cell"><span class="lead-avatar">${initials(item.lead_name)}</span><div><strong>${escapeHtml(item.lead_name)}</strong><span>${escapeHtml(item.channel)}</span></div></div>${badge(item.status)}</div>
+          <p class="history-message">${escapeHtml(item.message)}</p>
+          <div class="history-meta"><span>${formatDateTime(item.created_at)}</span><div class="actions"><button class="icon-button" data-history-whatsapp="${item.id}" title="Abrir no WhatsApp">${icon("phone")}</button><button class="icon-button" data-delete="followups" data-id="${item.id}">${icon("trash")}</button></div></div>
+        </article>`).join("")}</div>` : emptyState("Histórico vazio", "Crie e salve uma mensagem para começar o acompanhamento.", null, "message")}
+      </div>
+    </section>
+  `;
+  bindFollowupEvents();
+}
+
+function bindFollowupEvents() {
+  const generate = $("#generate-message");
+  if (!generate) return;
+  $("#followup-lead").addEventListener("change", (event) => { state.followupLead = event.target.value; });
+  generate.addEventListener("click", async () => {
+    generate.disabled = true;
+    generate.innerHTML = '<span class="spinner" style="width:16px;height:16px;margin:0"></span> Criando...';
+    try {
+      const result = await api("/api/followups/suggest", {
+        method: "POST",
+        body: JSON.stringify({
+          lead_id: $("#followup-lead").value,
+          tone: $("#followup-tone").value,
+          context: $("#followup-context").value
+        })
+      });
+      state.generatedMessage = result.message;
+      $("#followup-message").value = result.message;
+      const source = $("#suggestion-source");
+      if (result.source === "openai") {
+        source.className = "suggestion-notice success";
+        source.textContent = `Sugestão criada com OpenAI (${result.model}). Revise antes de enviar.`;
+      } else if (result.warningCode === "openai_quota") {
+        source.className = "suggestion-notice warning";
+        source.innerHTML = `
+          <strong>Créditos da API esgotados.</strong>
+          Foi usada a sugestão local. Adicione saldo ou aumente o limite da API e tente novamente.
+          <a href="${result.actionUrl}" target="_blank" rel="noopener noreferrer">Abrir faturamento da OpenAI</a>
+        `;
+      } else if (result.warning) {
+        source.className = "suggestion-notice warning";
+        source.textContent = `Foi usada a sugestão local. ${result.warning}`;
+      } else {
+        source.className = "suggestion-notice";
+        source.textContent = "Sugestão inteligente local. Configure a OpenAI em Configurações para usar a API.";
+      }
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      generate.disabled = false;
+      generate.innerHTML = `${icon("spark")} Sugerir mensagem`;
+    }
+  });
+  $("#copy-message").addEventListener("click", async () => {
+    const text = $("#followup-message").value.trim();
+    if (!text) return showToast("Crie uma mensagem primeiro.", "error");
+    await navigator.clipboard.writeText(text);
+    showToast("Mensagem copiada.");
+  });
+  $("#save-followup").addEventListener("click", async () => {
+    const text = $("#followup-message").value.trim();
+    if (!text) return showToast("Crie uma mensagem primeiro.", "error");
+    try {
+      await api("/api/followups", { method: "POST", body: JSON.stringify({ lead_id: $("#followup-lead").value, message: text, status: "Rascunho", channel: "WhatsApp" }) });
+      state.generatedMessage = "";
+      showToast("Follow-up salvo no histórico.");
+      await renderFollowup($("#followup-lead").value);
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  $("#send-whatsapp").addEventListener("click", () => openWhatsApp($("#followup-lead").value, $("#followup-message").value));
+}
+
+function openWhatsApp(leadId, message) {
+  const lead = state.leads.find((item) => sameId(item.id, leadId));
+  if (!lead) return showToast("Lead não encontrado.", "error");
+  if (!message?.trim()) return showToast("Crie uma mensagem primeiro.", "error");
+  let phone = String(lead.phone || "").replace(/\D/g, "");
+  if (!phone) return showToast("Este lead não possui telefone cadastrado.", "error");
+  if (phone.length <= 11) phone = `55${phone}`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message.trim())}`, "_blank", "noopener,noreferrer");
+}
+
+const optionGroups = [
+  ["leads.origin", "Leads", "Origens", "Canais de entrada dos leads"],
+  ["leads.status", "Leads e Kanban", "Status / colunas", "Etapas do fluxo comercial"],
+  ["pending.type", "Pendências", "Tipos", "Tipos de documentos e retornos"],
+  ["pending.status", "Pendências", "Status", "Situações das pendências"],
+  ["tasks.type", "Tarefas", "Tipos", "Tipos de atividade"],
+  ["tasks.category", "Tarefas", "Categorias", "Áreas de organização"],
+  ["tasks.priority", "Tarefas", "Prioridades", "Níveis de importância"],
+  ["tasks.status", "Tarefas", "Status", "Situações das tarefas"]
+];
+
+const settingsSections = [
+  ["openai", "OpenAI", "Inteligência para follow-up", "spark"],
+  ["leads", "Leads", "Origens e etapas do Kanban", "users"],
+  ["pending", "Pendências", "Tipos e status", "alert"],
+  ["tasks", "Tarefas", "Tipos, categorias e status", "check"]
+];
+
+async function renderSettings() {
+  const [options, settings] = await Promise.all([ensureOptions(true), api("/api/settings")]);
+  state.options = options;
+  $("#content").innerHTML = `
+    <section class="settings-layout">
+      <aside class="settings-menu panel">
+        <div class="settings-menu-heading">
+          <span class="eyebrow eyebrow-dark">Acessos</span>
+          <h2>Configurações</h2>
+        </div>
+        <nav class="settings-nav" aria-label="Áreas de configurações">
+          ${settingsSections.map(([id, title, description, iconName]) => `
+            <button class="settings-nav-item ${state.settingsSection === id ? "active" : ""}" data-settings-section="${id}">
+              <span class="settings-nav-icon">${icon(iconName)}</span>
+              <span><strong>${title}</strong><small>${description}</small></span>
+              ${icon("chevron")}
+            </button>
+          `).join("")}
+        </nav>
+      </aside>
+      <div class="settings-content">
+        ${renderSettingsSection(settings)}
+      </div>
+    </section>
+  `;
+  $$(".settings-nav-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.settingsSection = button.dataset.settingsSection;
+      renderSettings();
+    });
+  });
+  bindSettingsEvents();
+}
+
+function renderSettingsSection(settings) {
+  if (state.settingsSection === "openai") {
+    const netlifyManaged = settings.openai.managedByNetlify;
+    return `<div class="panel settings-openai">
+      <div class="panel-header">
+        <div><span class="settings-module">Integração</span><h3>OpenAI</h3><p>Use inteligência artificial nas mensagens de follow-up</p></div>
+        ${settings.openai.configured ? badge("Conectada") : badge("Não configurada")}
+      </div>
+      <form id="openai-settings-form" class="form-stack">
+        ${netlifyManaged ? `
+        <div class="integration-managed">
+          <strong>Chave protegida pela Netlify</strong>
+          <p>A chave não aparece no navegador. Configure <code>OPENAI_API_KEY</code> em Site configuration → Environment variables.</p>
+        </div>` : `<label>
+          <span>Chave da API</span>
+          <div class="password-wrap">
+            <input id="openai-api-key" name="apiKey" type="password" autocomplete="off" placeholder="${settings.openai.configured ? settings.openai.apiKeyMasked : "sk-..."}" />
+            <button id="toggle-openai-key" class="icon-button" type="button" aria-label="Mostrar chave">${icon("eye")}</button>
+          </div>
+          <small class="muted">${settings.openai.configured ? "Uma chave está salva. Digite outra somente para substituir." : "A chave será criptografada e salva neste computador."}</small>
+        </label>`}
+        <label>
+          <span>Modelo</span>
+          <input id="openai-model" name="model" value="${escapeHtml(settings.openai.model)}" placeholder="gpt-5.4-mini" />
+          <small class="muted"><strong>gpt-5.4-mini</strong> é recomendado para economizar créditos.</small>
+        </label>
+        <div class="button-row">
+          <button class="button button-primary" type="submit">${icon("check")} Salvar</button>
+          <button class="button button-secondary" type="button" id="test-openai">${icon("spark")} Testar</button>
+          <button class="button button-secondary" type="button" id="use-economy-model">Modelo econômico</button>
+          ${settings.openai.configured && !netlifyManaged ? `<button class="button button-danger" type="button" id="remove-openai-key">${icon("trash")} Remover chave</button>` : ""}
+        </div>
+        <p id="openai-result" class="integration-result"></p>
+      </form>
+    </div>`;
+  }
+
+  const groups = optionGroups.filter(([group]) => group.startsWith(`${state.settingsSection}.`));
+  const section = settingsSections.find(([id]) => id === state.settingsSection);
+  return `
+    <div class="settings-section-header">
+      <span class="eyebrow eyebrow-dark">Campos personalizados</span>
+      <h2>${escapeHtml(section?.[1] || "Opções")}</h2>
+      <p class="muted">Adicione, renomeie ou exclua as opções usadas nos cadastros.</p>
+    </div>
+    <div class="settings-groups">
+      ${groups.map(([group, module, title, description]) => renderOptionGroup(group, module, title, description)).join("")}
+    </div>
+  `;
+}
+
+function renderOptionGroup(group, module, title, description) {
+  const values = state.options[group] || [];
+  return `<article class="panel option-panel" data-option-group="${group}">
+    <div class="panel-header"><div><span class="settings-module">${module}</span><h3>${title}</h3><p>${description}</p></div></div>
+    <div class="option-list">
+      ${values.map((item) => `<div class="option-row">
+        <input value="${escapeHtml(item.value)}" data-option-input="${item.id}" aria-label="Nome da opção ${escapeHtml(item.value)}" />
+        <button class="icon-button" data-save-option="${item.id}" title="Salvar nome">${icon("check")}</button>
+        <button class="icon-button" data-delete-option="${item.id}" title="Excluir opção">${icon("trash")}</button>
+      </div>`).join("")}
+    </div>
+    <form class="option-add-form" data-add-option="${group}">
+      <input name="value" placeholder="Nova opção" required />
+      <button class="button button-secondary button-small" type="submit">${icon("plus")} Adicionar</button>
+    </form>
+  </article>`;
+}
+
+function bindSettingsEvents() {
+  const form = $("#openai-settings-form");
+  $("#toggle-openai-key")?.addEventListener("click", () => {
+    const input = $("#openai-api-key");
+    input.type = input.type === "password" ? "text" : "password";
+    $("#toggle-openai-key").innerHTML = icon(input.type === "password" ? "eye" : "eyeOff");
+  });
+  $("#use-economy-model")?.addEventListener("click", () => {
+    $("#openai-model").value = "gpt-5.4-mini";
+    showToast("Modelo econômico selecionado. Clique em Salvar integração.");
+  });
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      await api("/api/settings/openai", {
+        method: "PUT",
+        body: JSON.stringify({
+          apiKey: $("#openai-api-key")?.value || "",
+          model: $("#openai-model").value
+        })
+      });
+      showToast("Integração com OpenAI salva.");
+      await renderSettings();
+    } catch (error) {
+      showToast(error.message, "error");
+      button.disabled = false;
+    }
+  });
+  $("#test-openai")?.addEventListener("click", async () => {
+    const button = $("#test-openai");
+    const result = $("#openai-result");
+    button.disabled = true;
+    result.className = "integration-result";
+    result.textContent = "Testando conexão...";
+    try {
+      const data = await api("/api/settings/openai/test", {
+        method: "POST",
+        body: JSON.stringify({
+          apiKey: $("#openai-api-key")?.value || "",
+          model: $("#openai-model").value
+        })
+      });
+      result.className = "integration-result success";
+      result.textContent = `Conexão aprovada com ${data.model}.`;
+    } catch (error) {
+      result.className = "integration-result error";
+      if (error.code === "openai_quota") {
+        result.innerHTML = `Créditos da API esgotados ou limite mensal atingido. <a href="${error.actionUrl}" target="_blank" rel="noopener noreferrer">Abrir faturamento da OpenAI</a>.`;
+      } else {
+        result.textContent = error.message;
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("#remove-openai-key")?.addEventListener("click", async () => {
+    if (!window.confirm("Remover a chave da OpenAI salva neste computador?")) return;
+    await api("/api/settings/openai", {
+      method: "PUT",
+      body: JSON.stringify({ model: $("#openai-model").value, removeKey: true })
+    });
+    showToast("Chave da OpenAI removida.");
+    await renderSettings();
+  });
+  $$(".option-add-form").forEach((optionForm) => {
+    optionForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const [module, field] = optionForm.dataset.addOption.split(".");
+      const value = new FormData(optionForm).get("value");
+      try {
+        await api("/api/options", {
+          method: "POST",
+          body: JSON.stringify({ module, field, value })
+        });
+        showToast("Opção adicionada.");
+        await renderSettings();
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+  });
+}
+
+const schemas = {
+  leads: {
+    title: "Lead",
+    endpoint: "leads",
+    fields: [
+      ["name", "Nome", "text", true],
+      ["phone", "Telefone", "tel"],
+      ["email", "E-mail", "email"],
+      ["origin", "Origem", "option", false, "leads.origin"],
+      ["entry_date", "Data de entrada", "date", true],
+      ["status", "Status", "option", true, "leads.status"],
+      ["commission", "Comissão (R$)", "number"],
+      ["notes", "Observações", "textarea", false, null, "full"]
+    ]
+  },
+  appointments: {
+    title: "Compromisso",
+    endpoint: "appointments",
+    fields: [
+      ["title", "Título", "text", true],
+      ["lead_id", "Cliente relacionado", "lead"],
+      ["date", "Data", "date", true],
+      ["time", "Horário", "time"],
+      ["reminder", "Lembrete", "select", false, [["0", "No horário"], ["10", "10 minutos antes"], ["30", "30 minutos antes"], ["60", "1 hora antes"], ["1440", "1 dia antes"]]],
+      ["completed", "Status", "select", false, [["0", "Pendente"], ["1", "Concluído"]]],
+      ["notes", "Observações", "textarea", false, null, "full"]
+    ]
+  },
+  pending: {
+    title: "Pendência",
+    endpoint: "pending",
+    fields: [
+      ["lead_id", "Lead", "lead", true],
+      ["type", "Tipo", "option", true, "pending.type"],
+      ["due_date", "Prazo", "date"],
+      ["priority", "Prioridade", "select", true, ["Baixa", "Média", "Alta"]],
+      ["status", "Status", "option", true, "pending.status"],
+      ["description", "Descrição", "textarea", false, null, "full"]
+    ]
+  },
+  tasks: {
+    title: "Tarefa",
+    endpoint: "tasks",
+    fields: [
+      ["title", "Título", "text", true],
+      ["type", "Tipo", "option", false, "tasks.type"],
+      ["category", "Categoria", "option", false, "tasks.category"],
+      ["lead_id", "Cliente", "lead"],
+      ["date", "Data", "date", true],
+      ["time", "Horário", "time"],
+      ["priority", "Prioridade", "option", true, "tasks.priority"],
+      ["status", "Status", "option", true, "tasks.status"],
+      ["notes", "Observação", "textarea", false, null, "full"]
+    ]
+  },
+  marketing: {
+    title: "Ação de marketing",
+    endpoint: "marketing",
+    fields: [
+      ["title", "Título", "text", true],
+      ["type", "Tipo", "select", false, ["Postagem", "Campanha", "Anúncio", "Evento", "E-mail", "Parceria", "Outro"]],
+      ["status", "Status", "select", true, ["Planejada", "Em andamento", "Concluída", "Cancelada"]],
+      ["deadline", "Prazo", "date"],
+      ["description", "Descrição", "textarea", false, null, "full"]
+    ]
+  }
+};
+
+async function openEntityForm(entity, item = null) {
+  const schema = schemas[entity];
+  if (!schema) return;
+  if (schema.fields.some((field) => field[2] === "option")) await ensureOptions();
+  if (schema.fields.some((field) => field[2] === "lead")) await ensureLeads();
+  $("#modal-title").textContent = `${item ? "Editar" : "Novo"} ${schema.title.toLowerCase()}`;
+  $("#modal-body").innerHTML = `<form id="entity-form" class="entity-form">
+    <div class="form-grid">${schema.fields.map((field) => renderField(field, item || {})).join("")}</div>
+    <div class="form-actions">
+      <button type="button" class="button button-secondary" data-close-modal>Cancelar</button>
+      <button type="submit" class="button button-primary">${item ? "Salvar alterações" : "Cadastrar"}</button>
+    </div>
+  </form>`;
+  $("#modal").hidden = false;
+  document.body.style.overflow = "hidden";
+  setTimeout(() => $("#entity-form input, #entity-form select")?.focus(), 20);
+  $("#entity-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = event.submitter;
+    submit.disabled = true;
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    ["reminder", "completed"].forEach((key) => {
+      if (key in data) data[key] = data[key] === "" ? null : Number(data[key]);
+    });
+    if ("lead_id" in data) data.lead_id = data.lead_id || null;
+    if ("commission" in data) data.commission = Number(String(data.commission).replace(",", ".") || 0);
+    try {
+      await api(`/api/${schema.endpoint}${item ? `/${item.id}` : ""}`, {
+        method: item ? "PUT" : "POST",
+        body: JSON.stringify(data)
+      });
+      closeModal();
+      if (entity === "leads") state.leads = [];
+      showToast(`${schema.title} ${item ? "atualizado" : "cadastrado"} com sucesso.`);
+      await navigate(state.view);
+    } catch (error) {
+      showToast(error.message, "error");
+      submit.disabled = false;
+    }
+  });
+}
+
+function renderField(field, item) {
+  const [name, label, type, required, options, width] = field;
+  const defaults = {
+    entry_date: new Date().toISOString().slice(0, 10),
+    date: state.selectedDate,
+    status: name === "status" ? undefined : "",
+    priority: "Média",
+    reminder: 30,
+    completed: 0,
+    commission: 0
+  };
+  const value = item[name] ?? defaults[name] ?? "";
+  const cls = width === "full" ? "field-full" : "";
+  if (type === "textarea") {
+    return `<label class="${cls}"><span>${label}</span><textarea name="${name}" ${required ? "required" : ""}>${escapeHtml(value)}</textarea></label>`;
+  }
+  if (type === "select" || type === "lead" || type === "option") {
+    const rawOptions = type === "lead"
+      ? state.leads.map((lead) => [String(lead.id), lead.name])
+      : type === "option"
+        ? optionValues(options)
+        : options || [];
+    const normalized = rawOptions.map((option) => Array.isArray(option) ? option : [option, option]);
+    return `<label class="${cls}"><span>${label}</span><select name="${name}" ${required ? "required" : ""}>
+      ${!required ? '<option value="">Não informado</option>' : ""}
+      ${normalized.map(([optionValue, optionLabel]) => `<option value="${escapeHtml(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${escapeHtml(optionLabel)}</option>`).join("")}
+    </select></label>`;
+  }
+  return `<label class="${cls}"><span>${label}</span><input name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${type === "number" ? 'step="0.01" min="0"' : ""} /></label>`;
+}
+
+function closeModal() {
+  $("#modal").hidden = true;
+  $("#modal-body").innerHTML = "";
+  document.body.style.overflow = "";
+}
+
+async function deleteRecord(entity, id) {
+  const label = schemas[entity]?.title || "Registro";
+  if (!window.confirm(`Excluir este ${label.toLowerCase()}? Esta ação não poderá ser desfeita.`)) return;
+  try {
+    await api(`/api/${entity}/${id}`, { method: "DELETE" });
+    if (entity === "leads") state.leads = [];
+    showToast(`${label} excluído.`);
+    await navigate(state.view);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+function showLogin() {
+  state.user = null;
+  $("#app").hidden = true;
+  $("#login-screen").hidden = false;
+}
+
+function showApp(user) {
+  state.user = user;
+  $("#sidebar-user").textContent = user.name;
+  $("#login-screen").hidden = true;
+  $("#app").hidden = false;
+  navigate("dashboard");
+}
+
+$("#login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = event.submitter;
+  const error = $("#login-error");
+  if (hasMissingProductionConfig) {
+    error.textContent = "O Supabase não foi configurado neste deploy.";
+    return;
+  }
+  error.textContent = "";
+  button.disabled = true;
+  button.innerHTML = "Entrando...";
+  try {
+    const payload = Object.fromEntries(new FormData(form));
+    const data = await api("/api/login", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    showApp(data.user);
+  } catch (err) {
+    error.textContent = err.message;
+  } finally {
+    button.disabled = false;
+    button.innerHTML = 'Entrar no CRM <span aria-hidden="true">→</span>';
+  }
+});
+
+$("#toggle-password").innerHTML = icon("eye");
+$("#toggle-password").addEventListener("click", () => {
+  const input = $("#password");
+  input.type = input.type === "password" ? "text" : "password";
+  $("#toggle-password").innerHTML = icon(input.type === "password" ? "eye" : "eyeOff");
+});
+
+$("#logout-button").innerHTML = icon("logout");
+$("#menu-button").innerHTML = icon("menu");
+$$("[data-close-modal]").forEach((button) => { button.innerHTML = button.classList.contains("icon-button") ? icon("close") : button.innerHTML; });
+
+$("#logout-button").addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST" });
+  showLogin();
+});
+
+$("#menu-button").addEventListener("click", () => $("#app").classList.add("sidebar-open"));
+$("#sidebar-overlay").addEventListener("click", () => $("#app").classList.remove("sidebar-open"));
+
+$("#main-nav").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-view]");
+  if (button) navigate(button.dataset.view);
+});
+
+$("#primary-action").addEventListener("click", () => {
+  const info = viewInfo[state.view];
+  if (state.view === "followup") {
+    $("#followup-lead")?.focus();
+  } else if (info.entity) {
+    openEntityForm(info.entity);
+  }
+});
+
+$("#content").addEventListener("click", async (event) => {
+  const googleCalendar = event.target.closest("[data-google-calendar]");
+  if (googleCalendar) {
+    const task = state.collections.tasks?.find(
+      (item) => sameId(item.id, googleCalendar.dataset.googleCalendar)
+    );
+    if (!task) return showToast("Tarefa não encontrada.", "error");
+    window.open(googleCalendarUrl(task), "_blank", "noopener,noreferrer");
+    showToast("Google Agenda aberto. Confirme o evento para salvar.");
+    return;
+  }
+  const renameOption = event.target.closest("[data-rename-option]");
+  if (renameOption) {
+    const current = renameOption.dataset.optionValue;
+    const value = window.prompt("Novo nome da coluna:", current)?.trim();
+    if (!value || value === current) return;
+    try {
+      await api(`/api/options/${renameOption.dataset.renameOption}`, {
+        method: "PUT",
+        body: JSON.stringify({ value })
+      });
+      state.options = {};
+      state.leads = [];
+      showToast("Coluna renomeada e leads atualizados.");
+      return navigate(state.view);
+    } catch (error) {
+      return showToast(error.message, "error");
+    }
+  }
+  const saveOption = event.target.closest("[data-save-option]");
+  if (saveOption) {
+    const input = $(`[data-option-input="${saveOption.dataset.saveOption}"]`);
+    try {
+      await api(`/api/options/${saveOption.dataset.saveOption}`, {
+        method: "PUT",
+        body: JSON.stringify({ value: input.value })
+      });
+      state.options = {};
+      state.leads = [];
+      showToast("Opção atualizada.");
+      return renderSettings();
+    } catch (error) {
+      return showToast(error.message, "error");
+    }
+  }
+  const deleteOption = event.target.closest("[data-delete-option]");
+  if (deleteOption) {
+    if (!window.confirm("Excluir esta opção?")) return;
+    try {
+      await api(`/api/options/${deleteOption.dataset.deleteOption}`, { method: "DELETE" });
+      state.options = {};
+      showToast("Opção excluída.");
+      return renderSettings();
+    } catch (error) {
+      return showToast(error.message, "error");
+    }
+  }
+  const view = event.target.closest("[data-view]");
+  if (view) return navigate(view.dataset.view);
+  const add = event.target.closest("[data-new]");
+  if (add) return openEntityForm(add.dataset.new);
+  const edit = event.target.closest("[data-edit]");
+  if (edit) {
+    const collection = state.collections[edit.dataset.edit] || [];
+    const item = collection.find((entry) => sameId(entry.id, edit.dataset.id));
+    return openEntityForm(edit.dataset.edit, item);
+  }
+  const remove = event.target.closest("[data-delete]");
+  if (remove) return deleteRecord(remove.dataset.delete, remove.dataset.id);
+  const followup = event.target.closest("[data-followup-lead]");
+  if (followup) {
+    state.followupLead = followup.dataset.followupLead;
+    await navigate("followup");
+    return;
+  }
+  const historyWhatsApp = event.target.closest("[data-history-whatsapp]");
+  if (historyWhatsApp) {
+    const item = state.collections.followups.find((entry) => sameId(entry.id, historyWhatsApp.dataset.historyWhatsapp));
+    return item && openWhatsApp(item.lead_id, item.message);
+  }
+  const date = event.target.closest("[data-date]");
+  if (date) {
+    state.selectedDate = date.dataset.date;
+    return renderDay();
+  }
+  if (event.target.closest("[data-today]")) {
+    state.selectedDate = new Date().toISOString().slice(0, 10);
+    return renderDay();
+  }
+  const appointment = event.target.closest("[data-toggle-appointment]");
+  if (appointment) {
+    const item = state.collections.appointments.find((entry) => sameId(entry.id, appointment.dataset.toggleAppointment));
+    await api(`/api/appointments/${item.id}`, { method: "PUT", body: JSON.stringify({ completed: item.completed ? 0 : 1 }) });
+    showToast(item.completed ? "Compromisso reaberto." : "Compromisso concluído.");
+    return renderDay();
+  }
+  const task = event.target.closest("[data-complete-task]");
+  if (task) {
+    await api(`/api/tasks/${task.dataset.completeTask}`, {
+      method: "PUT",
+      body: JSON.stringify({ status: terminalOption("tasks.status", "Concluída") })
+    });
+    showToast("Tarefa concluída.");
+    return renderTasks();
+  }
+  if (event.target.closest("[data-retry]")) return navigate(state.view);
+});
+
+$("#modal").addEventListener("click", (event) => {
+  if (event.target.closest("[data-close-modal]")) closeModal();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#modal").hidden) closeModal();
+});
+
+$("#today-chip").textContent = new Intl.DateTimeFormat("pt-BR", {
+  weekday: "long", day: "2-digit", month: "long"
+}).format(new Date());
+
+if (isSupabaseConfigured) {
+  $("#login-label").textContent = "E-mail";
+  const usernameInput = $('#login-form input[name="username"]');
+  usernameInput.type = "email";
+  usernameInput.autocomplete = "email";
+  usernameInput.placeholder = "Digite o e-mail cadastrado no Supabase";
+  $("#login-help").innerHTML = "Use o usuário criado em <strong>Supabase → Authentication → Users</strong>.";
+} else if (hasMissingProductionConfig) {
+  $("#login-error").textContent = "O Supabase não foi configurado neste deploy.";
+  $("#login-help").innerHTML =
+    "Cadastre <strong>NEXT_PUBLIC_SUPABASE_URL</strong> e <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong> na Netlify e faça um novo deploy.";
+}
+
+if (hasMissingProductionConfig) {
+  showLogin();
+} else {
+  try {
+    const session = await api("/api/session");
+    showApp(session.user);
+  } catch {
+    showLogin();
+  }
+}

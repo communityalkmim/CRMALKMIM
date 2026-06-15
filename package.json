@@ -1,0 +1,15 @@
+{
+  "name": "maikon-crm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "build": "node scripts/build.mjs",
+    "dev": "npx netlify-cli dev",
+    "migrate:supabase": "node --no-warnings scripts/migrate-sqlite-to-supabase.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
