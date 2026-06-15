@@ -11,5 +11,10 @@ RECURSOS
 - Tarefas e Google Agenda
 - Configurações de opções e colunas
 
+ATUALIZAÇÃO DO BANCO
+No Supabase, abra SQL Editor > New query e execute todo o arquivo
+supabase/ATUALIZAR-BANCO.sql. O procedimento preserva os cadastros existentes e
+permite que os usuários autorizados compartilhem a mesma base.
+
 PUBLICAÇÃO
 Consulte o arquivo README.md para configurar o Supabase e publicar na Netlify.

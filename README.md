@@ -18,9 +18,9 @@ Em **Project Settings → API Keys**, copie:
 
 Nunca use a chave `service_role` no navegador.
 
-Se o CRM já estava funcionando antes da inclusão dos planos, execute novamente o
-arquivo `supabase/schema.sql`. Ele adiciona os novos campos sem apagar os leads
-existentes.
+Se o CRM já estava funcionando antes da inclusão dos planos, execute o arquivo
+`supabase/ATUALIZAR-BANCO.sql`. Ele adiciona os novos campos, corrige o acesso das
+telas e não apaga os leads existentes.
 
 ## Variáveis
 
@@ -80,7 +80,15 @@ O arquivo `supabase/schema.sql` cria:
 - `followups`
 - `option_values`
 
-Todas possuem políticas RLS para que cada usuário acesse somente seus próprios dados.
+Todas possuem políticas RLS. Os usuários cadastrados em
+**Supabase → Authentication → Users** compartilham a mesma base do CRM. Assim, um
+lead criado por um usuário também aparece para os demais usuários autorizados.
+
+Os dados ficam armazenados no Supabase, não na Netlify. Fazer um novo deploy,
+limpar o cache ou trocar os arquivos publicados não apaga os cadastros.
+
+Mantenha o cadastro público de usuários desativado no Supabase e crie manualmente
+somente os usuários que devem acessar os dados da empresa.
 
 Cada plano possui:
 
