@@ -206,7 +206,7 @@ function getOptions() {
 const entities = {
   plans: {
     table: "plans",
-    fields: ["name", "installment_value", "commission_percent", "has_bonus", "bonus_description", "bonus_value"],
+    fields: ["name", "commission_percent"],
     required: ["name"]
   },
   leads: {
@@ -329,33 +329,26 @@ function applyPlanRule(data) {
   }
   const plan = db.prepare("SELECT * FROM plans WHERE id = ?").get(data.plan_id);
   if (!plan) throw new Error("Plano não encontrado.");
-  const planValue = Number(plan.installment_value || 0);
+  const planValue = Number(data.plan_value || 0);
+  if (planValue <= 0) throw new Error("Informe o valor fechado do plano.");
   const commissionPercent = Number(plan.commission_percent || 0);
+  const hasBonus = data.has_bonus ? 1 : 0;
+  const bonusValue = hasBonus ? Number(data.bonus_value || 0) : 0;
+  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiação.");
   return {
     ...data,
     plan_name: plan.name,
     plan_value: planValue,
     commission_percent: commissionPercent,
     commission: Math.round(planValue * commissionPercent) / 100,
-    has_bonus: plan.has_bonus ? 1 : 0,
-    bonus_description: plan.has_bonus ? plan.bonus_description || null : null,
-    bonus_value: plan.has_bonus ? Number(plan.bonus_value || 0) : 0
+    has_bonus: hasBonus,
+    bonus_description: hasBonus ? data.bonus_description || null : null,
+    bonus_value: bonusValue
   };
-}
-
-function normalizePlan(data) {
-  const result = { ...data };
-  if ("has_bonus" in result) result.has_bonus = result.has_bonus ? 1 : 0;
-  if (result.has_bonus === 0) {
-    result.bonus_description = null;
-    result.bonus_value = 0;
-  }
-  return result;
 }
 
 function createEntity(entity, data) {
   if (entity === "leads") data = applyPlanRule(data);
-  if (entity === "plans") data = normalizePlan(data);
   const config = entities[entity];
   for (const field of config.required) {
     if (data[field] === undefined || data[field] === null || String(data[field]).trim() === "") {
@@ -373,7 +366,6 @@ function createEntity(entity, data) {
 
 function updateEntity(entity, id, data) {
   if (entity === "leads") data = applyPlanRule(data);
-  if (entity === "plans") data = normalizePlan(data);
   const config = entities[entity];
   const fields = config.fields.filter((field) => data[field] !== undefined);
   if (!fields.length) throw new Error("Nenhuma alteração informada.");

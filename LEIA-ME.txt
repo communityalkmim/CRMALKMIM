@@ -4,7 +4,8 @@ RECURSOS
 - Painel com resumo
 - Agenda e lembretes
 - Leads e Kanban
-- Planos com comissão e premiação
+- Planos com nome e percentual de comissão
+- Valor fechado e premiação cadastrados individualmente no lead
 - Pagamentos com filtros, totais e exportação Excel
 - Pendências
 - Follow-up manual com envio pelo WhatsApp

@@ -92,18 +92,18 @@ somente os usuários que devem acessar os dados da empresa.
 
 Cada plano possui:
 
-- valor da primeira parcela;
-- percentual de comissão, como 100% ou 150%;
-- indicação de premiação;
-- descrição e valor da premiação.
+- nome do plano;
+- percentual de comissão, como 100% ou 150%.
 
-Ao selecionar um plano no lead, o CRM calcula automaticamente a comissão e salva
-uma cópia da regra comercial utilizada. Alterações futuras no plano não modificam
-as comissões já registradas nos leads anteriores.
+O valor fechado, a indicação de premiação, sua descrição e seu valor são
+informados individualmente no cadastro de cada lead. O CRM aplica o percentual do
+plano sobre o valor fechado e salva a comissão calculada. Alterações futuras no
+plano não modificam as comissões já registradas nos leads anteriores.
 
 ## Pagamentos e Premiações
 
-O menu **Pagamentos** reúne os valores registrados nos leads que possuem plano.
+O menu **Pagamentos** reúne o valor do plano, a comissão calculada e as premiações
+registradas nos leads que possuem plano.
 É possível filtrar por período, nome do cliente, plano e vigência. O mini dashboard
 mostra os totais de comissão, premiação e o total geral do filtro atual.
 
