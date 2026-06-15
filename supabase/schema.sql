@@ -57,17 +57,6 @@ create table if not exists public.tasks (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.marketing (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null,
-  type text,
-  status text not null default 'Planejada',
-  deadline date,
-  description text,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists public.followups (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -91,15 +80,6 @@ create table if not exists public.option_values (
   unique (user_id, module, field, value)
 );
 
-create table if not exists public.app_settings (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  key text not null,
-  value text,
-  updated_at timestamptz not null default now(),
-  unique (user_id, key)
-);
-
 create index if not exists leads_user_status_idx on public.leads(user_id, status);
 create index if not exists appointments_user_date_idx on public.appointments(user_id, date);
 create index if not exists pending_user_due_idx on public.pending_items(user_id, due_date);
@@ -110,20 +90,16 @@ alter table public.leads enable row level security;
 alter table public.appointments enable row level security;
 alter table public.pending_items enable row level security;
 alter table public.tasks enable row level security;
-alter table public.marketing enable row level security;
 alter table public.followups enable row level security;
 alter table public.option_values enable row level security;
-alter table public.app_settings enable row level security;
 
 grant select, insert, update, delete on table
   public.leads,
   public.appointments,
   public.pending_items,
   public.tasks,
-  public.marketing,
   public.followups,
-  public.option_values,
-  public.app_settings
+  public.option_values
 to authenticated;
 
 do $$
@@ -132,7 +108,7 @@ declare
 begin
   foreach table_name in array array[
     'leads', 'appointments', 'pending_items', 'tasks',
-    'marketing', 'followups', 'option_values', 'app_settings'
+    'followups', 'option_values'
   ]
   loop
     execute format('drop policy if exists "owner_all" on public.%I', table_name);
