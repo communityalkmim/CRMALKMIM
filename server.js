@@ -1,13 +1,11 @@
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { extname, join, normalize, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   randomBytes,
   scryptSync,
-  timingSafeEqual,
-  createCipheriv,
-  createDecipheriv
+  timingSafeEqual
 } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
@@ -30,6 +28,18 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    installment_value REAL NOT NULL DEFAULT 0,
+    commission_percent REAL NOT NULL DEFAULT 100,
+    has_bonus INTEGER NOT NULL DEFAULT 0,
+    bonus_description TEXT,
+    bonus_value REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -37,8 +47,17 @@ db.exec(`
     email TEXT,
     origin TEXT,
     entry_date TEXT,
+    contact_date TEXT,
+    effective_date TEXT,
+    plan_id INTEGER,
+    plan_name TEXT,
+    plan_value REAL NOT NULL DEFAULT 0,
+    commission_percent REAL NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'Novo',
     commission REAL NOT NULL DEFAULT 0,
+    has_bonus INTEGER NOT NULL DEFAULT 0,
+    bonus_description TEXT,
+    bonus_value REAL NOT NULL DEFAULT 0,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -84,16 +103,6 @@ db.exec(`
     FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE SET NULL
   );
 
-  CREATE TABLE IF NOT EXISTS marketing (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    type TEXT,
-    status TEXT NOT NULL DEFAULT 'Planejada',
-    deadline TEXT,
-    description TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
   CREATE TABLE IF NOT EXISTS followups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL,
@@ -116,18 +125,29 @@ db.exec(`
     UNIQUE(module, field, value)
   );
 
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
   CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
   CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date);
   CREATE INDEX IF NOT EXISTS idx_tasks_date ON tasks(date);
   CREATE INDEX IF NOT EXISTS idx_pending_due ON pending_items(due_date);
   CREATE INDEX IF NOT EXISTS idx_options_group ON option_values(module, field, sort_order);
 `);
+
+const leadColumns = new Set(db.prepare("PRAGMA table_info(leads)").all().map((column) => column.name));
+const missingLeadColumns = [
+  ["contact_date", "TEXT"],
+  ["effective_date", "TEXT"],
+  ["plan_id", "INTEGER"],
+  ["plan_name", "TEXT"],
+  ["plan_value", "REAL NOT NULL DEFAULT 0"],
+  ["commission_percent", "REAL NOT NULL DEFAULT 0"],
+  ["has_bonus", "INTEGER NOT NULL DEFAULT 0"],
+  ["bonus_description", "TEXT"],
+  ["bonus_value", "REAL NOT NULL DEFAULT 0"]
+];
+for (const [name, definition] of missingLeadColumns) {
+  if (!leadColumns.has(name)) db.exec(`ALTER TABLE leads ADD COLUMN ${name} ${definition}`);
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_leads_plan ON leads(plan_id)");
 
 const optionDefaults = {
   "leads.origin": ["Indicação", "Instagram", "Facebook", "Google", "WhatsApp", "Site", "Outro"],
@@ -147,10 +167,6 @@ for (const [group, values] of Object.entries(optionDefaults)) {
   const [module, field] = group.split(".");
   values.forEach((value, index) => insertOption.run(module, field, value, index));
 }
-
-db.prepare(
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('openai_model', 'gpt-5.5')"
-).run();
 
 function hashPassword(password, salt) {
   return scryptSync(password, salt, 64).toString("hex");
@@ -176,52 +192,6 @@ const optionUsage = {
   "tasks.status": { table: "tasks", column: "status" }
 };
 
-const secretKeyPath = join(DATA_DIR, ".crm-secret");
-
-function getSecretKey() {
-  if (!existsSync(secretKeyPath)) {
-    writeFileSync(secretKeyPath, randomBytes(32));
-  }
-  const key = readFileSync(secretKeyPath);
-  if (key.length !== 32) throw new Error("Chave interna de segurança inválida.");
-  return key;
-}
-
-function encryptSecret(value) {
-  if (!value) return "";
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", getSecretKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64")).join(".");
-}
-
-function decryptSecret(value) {
-  if (!value) return "";
-  const [ivRaw, tagRaw, encryptedRaw] = value.split(".");
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    getSecretKey(),
-    Buffer.from(ivRaw, "base64")
-  );
-  decipher.setAuthTag(Buffer.from(tagRaw, "base64"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encryptedRaw, "base64")),
-    decipher.final()
-  ]).toString("utf8");
-}
-
-function getSetting(key) {
-  return db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key)?.value || "";
-}
-
-function setSetting(key, value) {
-  db.prepare(`
-    INSERT INTO app_settings (key, value, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `).run(key, value);
-}
-
 function getOptions() {
   const rows = db.prepare(
     "SELECT id, module, field, value, sort_order FROM option_values ORDER BY module, field, sort_order, id"
@@ -233,61 +203,19 @@ function getOptions() {
   }, {});
 }
 
-function getOpenAIConfig() {
-  const encryptedKey = getSetting("openai_api_key");
-  return {
-    configured: Boolean(encryptedKey),
-    apiKeyMasked: encryptedKey ? "••••••••••••••••" : "",
-    model: getSetting("openai_model") || "gpt-5.5"
-  };
-}
-
-async function callOpenAI(apiKey, model, input) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      input,
-      reasoning: { effort: "low" },
-      text: { verbosity: "low" },
-      max_output_tokens: 300
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = data.error?.message || `Falha HTTP ${response.status}`;
-    const error = new Error(`OpenAI: ${detail}`);
-    if (response.status === 429 && /quota|billing|credit/i.test(detail)) {
-      error.code = "openai_quota";
-      error.userMessage = "Créditos da API esgotados ou limite mensal atingido.";
-      error.actionUrl = "https://platform.openai.com/settings/organization/billing/overview";
-    } else if (response.status === 429) {
-      error.code = "openai_rate_limit";
-      error.userMessage = "Muitas solicitações em pouco tempo. Aguarde um momento e tente novamente.";
-    } else if (response.status === 401) {
-      error.code = "openai_auth";
-      error.userMessage = "A chave da API é inválida, expirou ou pertence a outro projeto.";
-      error.actionUrl = "https://platform.openai.com/api-keys";
-    } else {
-      error.code = "openai_error";
-      error.userMessage = detail;
-    }
-    throw error;
-  }
-  const message = data.output_text ||
-    data.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
-  if (!message?.trim()) throw new Error("A OpenAI não retornou uma mensagem.");
-  return message.trim();
-}
-
 const entities = {
+  plans: {
+    table: "plans",
+    fields: ["name", "installment_value", "commission_percent", "has_bonus", "bonus_description", "bonus_value"],
+    required: ["name"]
+  },
   leads: {
     table: "leads",
-    fields: ["name", "phone", "email", "origin", "entry_date", "status", "commission", "notes"],
+    fields: [
+      "name", "phone", "email", "origin", "entry_date", "contact_date", "effective_date",
+      "plan_id", "plan_name", "plan_value", "commission_percent", "status", "commission",
+      "has_bonus", "bonus_description", "bonus_value", "notes"
+    ],
     required: ["name"]
   },
   appointments: {
@@ -304,11 +232,6 @@ const entities = {
     table: "tasks",
     fields: ["title", "type", "category", "lead_id", "date", "time", "priority", "status", "notes"],
     required: ["title", "date"]
-  },
-  marketing: {
-    table: "marketing",
-    fields: ["title", "type", "status", "deadline", "description"],
-    required: ["title"]
   },
   followups: {
     table: "followups",
@@ -383,11 +306,56 @@ function selectAll(entity) {
     tasks: "SELECT t.*, l.name AS lead_name FROM tasks t LEFT JOIN leads l ON l.id = t.lead_id ORDER BY t.date, t.time",
     followups: "SELECT f.*, l.name AS lead_name, l.phone AS lead_phone, l.status AS lead_status FROM followups f JOIN leads l ON l.id = f.lead_id ORDER BY f.created_at DESC"
   };
-  const sql = joins[entity] || `SELECT * FROM ${table} ORDER BY created_at DESC`;
+  const sql = entity === "plans"
+    ? "SELECT * FROM plans ORDER BY name"
+    : joins[entity] || `SELECT * FROM ${table} ORDER BY created_at DESC`;
   return db.prepare(sql).all();
 }
 
+function applyPlanRule(data) {
+  if (!Object.prototype.hasOwnProperty.call(data, "plan_id")) return data;
+  if (!data.plan_id) {
+    return {
+      ...data,
+      plan_id: null,
+      plan_name: null,
+      plan_value: 0,
+      commission_percent: 0,
+      commission: 0,
+      has_bonus: 0,
+      bonus_description: null,
+      bonus_value: 0
+    };
+  }
+  const plan = db.prepare("SELECT * FROM plans WHERE id = ?").get(data.plan_id);
+  if (!plan) throw new Error("Plano não encontrado.");
+  const planValue = Number(plan.installment_value || 0);
+  const commissionPercent = Number(plan.commission_percent || 0);
+  return {
+    ...data,
+    plan_name: plan.name,
+    plan_value: planValue,
+    commission_percent: commissionPercent,
+    commission: Math.round(planValue * commissionPercent) / 100,
+    has_bonus: plan.has_bonus ? 1 : 0,
+    bonus_description: plan.has_bonus ? plan.bonus_description || null : null,
+    bonus_value: plan.has_bonus ? Number(plan.bonus_value || 0) : 0
+  };
+}
+
+function normalizePlan(data) {
+  const result = { ...data };
+  if ("has_bonus" in result) result.has_bonus = result.has_bonus ? 1 : 0;
+  if (result.has_bonus === 0) {
+    result.bonus_description = null;
+    result.bonus_value = 0;
+  }
+  return result;
+}
+
 function createEntity(entity, data) {
+  if (entity === "leads") data = applyPlanRule(data);
+  if (entity === "plans") data = normalizePlan(data);
   const config = entities[entity];
   for (const field of config.required) {
     if (data[field] === undefined || data[field] === null || String(data[field]).trim() === "") {
@@ -404,11 +372,14 @@ function createEntity(entity, data) {
 }
 
 function updateEntity(entity, id, data) {
+  if (entity === "leads") data = applyPlanRule(data);
+  if (entity === "plans") data = normalizePlan(data);
   const config = entities[entity];
   const fields = config.fields.filter((field) => data[field] !== undefined);
   if (!fields.length) throw new Error("Nenhuma alteração informada.");
   const assignments = fields.map((field) => `${field} = ?`);
   if (entity === "leads") assignments.push("updated_at = CURRENT_TIMESTAMP");
+  if (entity === "plans") assignments.push("updated_at = CURRENT_TIMESTAMP");
   const values = fields.map((field) => cleanValue(data[field]));
   const result = db.prepare(
     `UPDATE ${config.table} SET ${assignments.join(", ")} WHERE id = ?`
@@ -417,6 +388,10 @@ function updateEntity(entity, id, data) {
 }
 
 function deleteEntity(entity, id) {
+  if (entity === "plans") {
+    const used = db.prepare("SELECT COUNT(*) AS value FROM leads WHERE plan_id = ?").get(id).value;
+    if (used) throw new Error("Este plano está vinculado a um ou mais leads e não pode ser excluído.");
+  }
   const result = db.prepare(`DELETE FROM ${entities[entity].table} WHERE id = ?`).run(id);
   if (!result.changes) throw new Error("Registro não encontrado.");
 }
@@ -454,52 +429,6 @@ function dashboardData() {
     ORDER BY date, time LIMIT 7
   `).all();
   return { stats, funnel, origins, agenda };
-}
-
-function localSuggestion(lead, context = "", tone = "Profissional") {
-  const firstName = lead.name.trim().split(/\s+/)[0];
-  const detail = context.trim() ? ` sobre ${context.trim()}` : "";
-  const templates = {
-    Novo: `Olá, ${firstName}! Tudo bem? Meu nome é Maikon. Recebi seu contato${detail} e estou à disposição para entender o que você precisa. Qual é o melhor horário para conversarmos?`,
-    "Em contato": `Olá, ${firstName}! Passando para dar continuidade ao nosso atendimento${detail}. Ficou alguma dúvida em que eu possa ajudar?`,
-    Proposta: `Olá, ${firstName}! Tudo bem? Gostaria de saber se conseguiu analisar a proposta que enviei${detail}. Posso esclarecer algum ponto para facilitar sua decisão?`,
-    Negociação: `Olá, ${firstName}! Estou acompanhando nossa negociação${detail} e queria entender como podemos avançar. Há algum ponto que você gostaria de ajustar ou conversar melhor?`,
-    Fechado: `Olá, ${firstName}! Obrigado pela confiança. Estou passando para confirmar se está tudo certo com seu atendimento${detail}. Conte comigo sempre que precisar.`,
-    Perdido: `Olá, ${firstName}! Tudo bem? Nosso último contato ficou em aberto${detail}. Caso ainda faça sentido para você, posso retomar o atendimento e ajudar com as opções disponíveis.`
-  };
-  let message = templates[lead.status] || templates["Em contato"];
-  if (tone === "Direto") message = message.replace("Tudo bem? ", "").replace("Estou passando para ", "");
-  if (tone === "Amigável") message = message.replace("Olá,", "Oi,").replace("Meu nome é Maikon.", "Aqui é o Maikon.");
-  return message;
-}
-
-async function aiSuggestion(lead, context, tone) {
-  const fallback = localSuggestion(lead, context, tone);
-  const encryptedKey = getSetting("openai_api_key");
-  const apiKey = process.env.OPENAI_API_KEY || (encryptedKey ? decryptSecret(encryptedKey) : "");
-  const model = process.env.OPENAI_MODEL || getSetting("openai_model") || "gpt-5.5";
-  if (!apiKey) return { message: fallback, source: "modelo_local" };
-  try {
-    const message = await callOpenAI(
-      apiKey,
-      model,
-      `Crie uma única mensagem curta de follow-up em português brasileiro para WhatsApp.
-Cliente: ${lead.name}
-Status atual: ${lead.status}
-Tom: ${tone}
-Contexto: ${context || "sem contexto adicional"}
-Resultado esperado: texto natural, útil e pronto para envio, sem markdown, sem inventar informações e com no máximo 80 palavras.`
-    );
-    return { message, source: "openai", model };
-  } catch (error) {
-    return {
-      message: fallback,
-      source: "modelo_local",
-      warning: error.userMessage || error.message,
-      warningCode: error.code || "openai_error",
-      actionUrl: error.actionUrl || ""
-    };
-  }
 }
 
 async function handleApi(req, res, url) {
@@ -600,46 +529,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/settings") {
-    return json(res, 200, { openai: getOpenAIConfig() });
-  }
-  if (req.method === "PUT" && url.pathname === "/api/settings/openai") {
-    const body = await readBody(req);
-    const model = String(body.model || "gpt-5.5").trim();
-    if (!model) return json(res, 400, { error: "Informe o modelo da OpenAI." });
-    setSetting("openai_model", model);
-    if (body.removeKey) {
-      setSetting("openai_api_key", "");
-    } else if (String(body.apiKey || "").trim()) {
-      const apiKey = String(body.apiKey).trim();
-      if (!apiKey.startsWith("sk-")) {
-        return json(res, 400, { error: "A chave deve começar com sk-." });
-      }
-      setSetting("openai_api_key", encryptSecret(apiKey));
-    }
-    return json(res, 200, { openai: getOpenAIConfig() });
-  }
-  if (req.method === "POST" && url.pathname === "/api/settings/openai/test") {
-    const body = await readBody(req);
-    const stored = getSetting("openai_api_key");
-    const apiKey = String(body.apiKey || "").trim() || (stored ? decryptSecret(stored) : "");
-    const model = String(body.model || getSetting("openai_model") || "gpt-5.5").trim();
-    if (!apiKey) return json(res, 400, { error: "Informe e salve uma chave da OpenAI." });
-    const message = await callOpenAI(
-      apiKey,
-      model,
-      "Responda somente com: Integração funcionando"
-    );
-    return json(res, 200, { ok: true, message, model });
-  }
-  if (req.method === "POST" && url.pathname === "/api/followups/suggest") {
-    const body = await readBody(req);
-    const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(body.lead_id);
-    if (!lead) return json(res, 404, { error: "Lead não encontrado." });
-    return json(res, 200, await aiSuggestion(lead, body.context || "", body.tone || "Profissional"));
-  }
-
-  const match = url.pathname.match(/^\/api\/(leads|appointments|pending|tasks|marketing|followups)(?:\/(\d+))?$/);
+  const match = url.pathname.match(/^\/api\/(plans|leads|appointments|pending|tasks|followups)(?:\/(\d+))?$/);
   if (!match) return json(res, 404, { error: "Rota não encontrada." });
   const [, entity, rawId] = match;
   const id = rawId ? Number(rawId) : null;
