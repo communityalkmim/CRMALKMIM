@@ -56,6 +56,29 @@ async function insert(table, rows, onConflict = "") {
 const db = new DatabaseSync(databasePath, { readOnly: true });
 const all = (sql) => db.prepare(sql).all();
 const leadMap = new Map();
+const planMap = new Map();
+const hasTable = (name) => Boolean(
+  db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)
+);
+const leadColumns = new Set(db.prepare("PRAGMA table_info(leads)").all().map((column) => column.name));
+
+if (hasTable("plans")) {
+  const plans = all("SELECT * FROM plans ORDER BY id");
+  for (const plan of plans) {
+    const [created] = await insert("plans", [{
+      user_id: userId,
+      name: plan.name,
+      installment_value: plan.installment_value,
+      commission_percent: plan.commission_percent,
+      has_bonus: Boolean(plan.has_bonus),
+      bonus_description: plan.bonus_description,
+      bonus_value: plan.bonus_value,
+      created_at: plan.created_at,
+      updated_at: plan.updated_at
+    }]);
+    planMap.set(plan.id, created.id);
+  }
+}
 
 const leads = all("SELECT * FROM leads ORDER BY id");
 for (const lead of leads) {
@@ -66,8 +89,17 @@ for (const lead of leads) {
     email: lead.email,
     origin: lead.origin,
     entry_date: lead.entry_date,
+    contact_date: leadColumns.has("contact_date") ? lead.contact_date : null,
+    effective_date: leadColumns.has("effective_date") ? lead.effective_date : null,
+    plan_id: leadColumns.has("plan_id") && lead.plan_id ? planMap.get(lead.plan_id) || null : null,
+    plan_name: leadColumns.has("plan_name") ? lead.plan_name : null,
+    plan_value: leadColumns.has("plan_value") ? lead.plan_value : 0,
+    commission_percent: leadColumns.has("commission_percent") ? lead.commission_percent : 0,
     status: lead.status,
     commission: lead.commission,
+    has_bonus: leadColumns.has("has_bonus") ? Boolean(lead.has_bonus) : false,
+    bonus_description: leadColumns.has("bonus_description") ? lead.bonus_description : null,
+    bonus_value: leadColumns.has("bonus_value") ? lead.bonus_value : 0,
     notes: lead.notes,
     created_at: lead.created_at,
     updated_at: lead.updated_at
