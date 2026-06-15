@@ -52,10 +52,14 @@ function parseBody(options = {}) {
 
 function apiError(error, fallback = "Não foi possível concluir a operação.") {
   const message = error?.message || fallback;
-  const translated = message
-    .replace("Invalid login credentials", "E-mail ou senha inválidos.")
-    .replace("Email not confirmed", "Confirme seu e-mail antes de entrar.")
-    .replace("User already registered", "Este e-mail já está cadastrado.");
+  const isSchemaError = ["42P01", "42703", "PGRST204", "PGRST205"].includes(error?.code)
+    || /schema cache|does not exist|column .* not found|relation .* not found/i.test(message);
+  const translated = isSchemaError
+    ? "O banco Supabase precisa ser atualizado. Execute supabase/ATUALIZAR-BANCO.sql no SQL Editor."
+    : message
+      .replace("Invalid login credentials", "E-mail ou senha inválidos.")
+      .replace("Email not confirmed", "Confirme seu e-mail antes de entrar.")
+      .replace("User already registered", "Este e-mail já está cadastrado.");
   const result = new Error(translated);
   result.code = error?.code || "";
   return result;

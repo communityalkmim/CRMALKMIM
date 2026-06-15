@@ -567,6 +567,22 @@ textarea {
   gap: 14px;
 }
 
+.database-notice {
+  margin-bottom: 16px;
+  padding: 13px 15px;
+  border: 1px solid #e4bd75;
+  border-radius: 12px;
+  background: #fff6e5;
+  color: #704b12;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.database-notice strong {
+  font-size: 13px;
+}
+
 .stat-card,
 .panel,
 .data-card,

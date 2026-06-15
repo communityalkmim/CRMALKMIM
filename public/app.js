@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260615-dbfix";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -12,6 +12,7 @@ const state = {
   plans: [],
   options: {},
   collections: {},
+  databaseNeedsUpdate: false,
   selectedDate: new Date().toISOString().slice(0, 10),
   settingsSection: "leads"
 };
@@ -203,6 +204,19 @@ function loading() {
   $("#content").innerHTML = '<div class="loading"><div><div class="spinner"></div>Carregando informações...</div></div>';
 }
 
+function isDatabaseSchemaError(error) {
+  return ["42P01", "42703", "PGRST204", "PGRST205"].includes(error?.code)
+    || /schema cache|does not exist|não existe|coluna|column|relation/i.test(error?.message || "");
+}
+
+function databaseUpdateNotice() {
+  if (!state.databaseNeedsUpdate) return "";
+  return `<div class="database-notice">
+    <strong>O banco Supabase precisa ser atualizado.</strong>
+    <span>Execute o arquivo <b>supabase/ATUALIZAR-BANCO.sql</b> no SQL Editor. Os dados existentes serão preservados.</span>
+  </div>`;
+}
+
 function renderNav() {
   $("#main-nav").innerHTML = navItems.map(([id, label, iconName]) => `
     <button class="nav-item ${state.view === id ? "active" : ""}" data-view="${id}">
@@ -252,7 +266,16 @@ async function ensureLeads(refresh = false) {
 }
 
 async function ensurePlans(refresh = false) {
-  if (refresh || !state.plans.length) state.plans = await api("/api/plans");
+  if (refresh || !state.plans.length) {
+    try {
+      state.plans = await api("/api/plans");
+      state.databaseNeedsUpdate = false;
+    } catch (error) {
+      if (!isDatabaseSchemaError(error)) throw error;
+      state.plans = [];
+      state.databaseNeedsUpdate = true;
+    }
+  }
   return state.plans;
 }
 
@@ -414,6 +437,7 @@ async function renderLeads() {
   const [leads] = await Promise.all([ensureLeads(true), ensureOptions(), ensurePlans()]);
   state.collections.leads = leads;
   $("#content").innerHTML = `
+    ${databaseUpdateNotice()}
     <div class="section-toolbar">
       <div class="filter-group">
         <div class="search-field">${icon("search")}<input id="lead-search" placeholder="Buscar por nome, telefone ou e-mail" /></div>
@@ -655,6 +679,7 @@ async function renderPayments() {
     .sort((left, right) => paymentDate(right).localeCompare(paymentDate(left)));
   state.collections.payments = payments;
   $("#content").innerHTML = `
+    ${databaseUpdateNotice()}
     <section id="payments-summary" class="payment-stats-grid"></section>
     <div class="section-toolbar payment-toolbar">
       <div class="payment-filters">
@@ -882,6 +907,7 @@ async function renderSettings() {
   state.plans = plans;
   state.collections.plans = plans;
   $("#content").innerHTML = `
+    ${databaseUpdateNotice()}
     <section class="settings-layout">
       <aside class="settings-menu panel">
         <div class="settings-menu-heading">
