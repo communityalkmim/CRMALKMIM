@@ -1,0 +1,45 @@
+MAIKON CRM
+==========
+
+COMO ABRIR
+1. Dê dois cliques no arquivo "INICIAR CRM.cmd".
+2. Aguarde o navegador abrir automaticamente.
+3. Não feche a janela do iniciador enquanto estiver usando o CRM.
+
+Endereço manual: http://127.0.0.1:4173
+
+ACESSO
+Login: MAIKONSAUDE
+Senha: ABC123
+
+BANCO DE DADOS
+Todas as informações são armazenadas no arquivo:
+data\crm.db
+
+Esse arquivo é um banco SQLite. Para fazer uma cópia de segurança, feche o
+CRM e copie a pasta "data" para um local seguro, pendrive ou serviço de nuvem.
+
+ÁREAS DISPONÍVEIS
+- Painel com visão geral, funil, origens e próximos compromissos
+- Meu Dia com agenda, horários e lembretes
+- Leads com contatos, origem, status, comissão e observações
+- Kanban com colunas editáveis e movimentação dos leads entre etapas
+- Pendências ligadas aos leads
+- Follow-up com sugestões de mensagem e abertura do WhatsApp
+- Tarefas com data, categoria, prioridade e status
+- Marketing com ações, prazos e descrições
+- Configurações para personalizar origens, status, tipos, categorias e prioridades
+
+INTEGRAÇÃO COM OPENAI (OPCIONAL)
+1. Entre no CRM e abra "Configurações".
+2. Informe sua chave da API da OpenAI.
+3. Confira o modelo e clique em "Salvar integração".
+4. Clique em "Testar conexão".
+
+A chave é criptografada e armazenada somente neste computador. A API da
+OpenAI possui cobrança própria, separada de uma assinatura do ChatGPT.
+Sem uma chave configurada, o sistema continua gerando sugestões locais.
+
+IMPORTANTE
+O CRM abre apenas neste computador por padrão (127.0.0.1). O envio pelo
+WhatsApp só ocorre depois que você revisa a mensagem e confirma no WhatsApp.
