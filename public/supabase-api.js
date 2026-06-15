@@ -16,6 +16,7 @@ const optionDefaults = {
 };
 
 const entityConfig = {
+  plans: { table: "plans" },
   leads: { table: "leads" },
   appointments: { table: "appointments" },
   pending: { table: "pending_items" },
@@ -104,7 +105,8 @@ async function selectEntity(entity) {
     followups: "*, leads(name, phone, status)"
   };
   let query = client.from(table).select(relationSelect[entity] || "*");
-  if (entity === "appointments" || entity === "tasks") query = query.order("date").order("time");
+  if (entity === "plans") query = query.order("name");
+  else if (entity === "appointments" || entity === "tasks") query = query.order("date").order("time");
   else if (entity === "pending") query = query.order("due_date");
   else query = query.order("created_at", { ascending: false });
   const { data, error } = await query;
@@ -124,12 +126,56 @@ async function selectEntity(entity) {
   });
 }
 
+async function applyPlanRule(payload) {
+  if (!Object.prototype.hasOwnProperty.call(payload, "plan_id")) return payload;
+  if (!payload.plan_id) {
+    return {
+      ...payload,
+      plan_id: null,
+      plan_name: null,
+      plan_value: 0,
+      commission_percent: 0,
+      commission: 0,
+      has_bonus: false,
+      bonus_description: null,
+      bonus_value: 0
+    };
+  }
+  const client = await getClient();
+  const { data: plan, error } = await client
+    .from("plans")
+    .select("id, name, installment_value, commission_percent, has_bonus, bonus_description, bonus_value")
+    .eq("id", payload.plan_id)
+    .single();
+  if (error || !plan) throw apiError(error, "Plano não encontrado.");
+  const planValue = Number(plan.installment_value || 0);
+  const commissionPercent = Number(plan.commission_percent || 0);
+  return {
+    ...payload,
+    plan_name: plan.name,
+    plan_value: planValue,
+    commission_percent: commissionPercent,
+    commission: Math.round(planValue * commissionPercent) / 100,
+    has_bonus: Boolean(plan.has_bonus),
+    bonus_description: plan.has_bonus ? plan.bonus_description || null : null,
+    bonus_value: plan.has_bonus ? Number(plan.bonus_value || 0) : 0
+  };
+}
+
 async function createEntity(entity, body) {
   const client = await getClient();
   const user = await getAuthUser();
   const table = entityConfig[entity].table;
-  const payload = { ...body, user_id: user.id };
+  let payload = { ...body, user_id: user.id };
+  if (entity === "leads") payload = await applyPlanRule(payload);
   if (entity === "appointments") payload.completed = Boolean(body.completed);
+  if (entity === "plans") {
+    payload.has_bonus = Boolean(body.has_bonus);
+    if (!payload.has_bonus) {
+      payload.bonus_description = null;
+      payload.bonus_value = 0;
+    }
+  }
   const { data, error } = await client.from(table).insert(payload).select("id").single();
   if (error) throw apiError(error);
   return { id: data.id };
@@ -138,8 +184,17 @@ async function createEntity(entity, body) {
 async function updateEntity(entity, id, body) {
   const client = await getClient();
   const table = entityConfig[entity].table;
-  const payload = { ...body };
+  let payload = { ...body };
+  if (entity === "leads") payload = await applyPlanRule(payload);
   if (entity === "appointments" && "completed" in payload) payload.completed = Boolean(payload.completed);
+  if (entity === "plans") {
+    if ("has_bonus" in payload) payload.has_bonus = Boolean(payload.has_bonus);
+    if (payload.has_bonus === false) {
+      payload.bonus_description = null;
+      payload.bonus_value = 0;
+    }
+    payload.updated_at = new Date().toISOString();
+  }
   if (entity === "leads") payload.updated_at = new Date().toISOString();
   const { error } = await client.from(table).update(payload).eq("id", id);
   if (error) throw apiError(error);
@@ -149,6 +204,9 @@ async function updateEntity(entity, id, body) {
 async function deleteEntity(entity, id) {
   const client = await getClient();
   const { error } = await client.from(entityConfig[entity].table).delete().eq("id", id);
+  if (error?.code === "23503" && entity === "plans") {
+    throw new Error("Este plano está vinculado a um ou mais leads e não pode ser excluído.");
+  }
   if (error) throw apiError(error);
   return { ok: true };
 }
@@ -291,7 +349,7 @@ export async function supabaseApi(path, options = {}) {
     return { ok: true };
   }
 
-  const entityMatch = path.match(/^\/api\/(leads|appointments|pending|tasks|followups)(?:\/([^/]+))?$/);
+  const entityMatch = path.match(/^\/api\/(plans|leads|appointments|pending|tasks|followups)(?:\/([^/]+))?$/);
   if (!entityMatch) throw new Error("Rota não encontrada.");
   const [, entity, id] = entityMatch;
   if (method === "GET" && !id) return selectEntity(entity);

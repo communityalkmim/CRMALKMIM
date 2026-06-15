@@ -9,6 +9,7 @@ const state = {
   user: null,
   view: "dashboard",
   leads: [],
+  plans: [],
   options: {},
   collections: {},
   selectedDate: new Date().toISOString().slice(0, 10),
@@ -34,6 +35,7 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2.1Z"/>',
   money: '<circle cx="12" cy="12" r="9"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 6v12"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
@@ -50,6 +52,7 @@ const navItems = [
   ["pending", "Pendências", "alert"],
   ["followup", "Follow-up", "message"],
   ["tasks", "Tarefas", "check"],
+  ["payments", "Pagamentos e Premiações", "money"],
   ["settings", "Configurações", "settings"]
 ];
 
@@ -61,6 +64,7 @@ const viewInfo = {
   pending: { title: "Pendências", kicker: "Documentos e retornos", action: "Nova pendência", entity: "pending" },
   followup: { title: "Follow-up", kicker: "Relacionamento com clientes", action: "Criar mensagem", entity: null },
   tasks: { title: "Tarefas", kicker: "Organização do trabalho", action: "Nova tarefa", entity: "tasks" },
+  payments: { title: "Pagamentos e Premiações", kicker: "Controle financeiro", action: "", entity: null },
   settings: { title: "Configurações", kicker: "Personalização do CRM", action: "", entity: null }
 };
 
@@ -232,6 +236,7 @@ async function navigate(view) {
       pending: renderPending,
       followup: renderFollowup,
       tasks: renderTasks,
+      payments: renderPayments,
       settings: renderSettings
     };
     await renderers[view]();
@@ -244,6 +249,11 @@ async function navigate(view) {
 async function ensureLeads(refresh = false) {
   if (refresh || !state.leads.length) state.leads = await api("/api/leads");
   return state.leads;
+}
+
+async function ensurePlans(refresh = false) {
+  if (refresh || !state.plans.length) state.plans = await api("/api/plans");
+  return state.plans;
 }
 
 async function ensureOptions(refresh = false) {
@@ -401,7 +411,7 @@ function renderAppointment(item) {
 }
 
 async function renderLeads() {
-  const [leads] = await Promise.all([ensureLeads(true), ensureOptions()]);
+  const [leads] = await Promise.all([ensureLeads(true), ensureOptions(), ensurePlans()]);
   state.collections.leads = leads;
   $("#content").innerHTML = `
     <div class="section-toolbar">
@@ -420,7 +430,7 @@ async function renderLeads() {
     const term = $("#lead-search").value.toLowerCase();
     const status = $("#lead-status-filter").value;
     const filtered = leads.filter((lead) => {
-      const haystack = `${lead.name} ${lead.phone || ""} ${lead.email || ""}`.toLowerCase();
+      const haystack = `${lead.name} ${lead.phone || ""} ${lead.email || ""} ${lead.plan_name || ""}`.toLowerCase();
       return haystack.includes(term) && (!status || lead.status === status);
     });
     $("#leads-table").innerHTML = renderLeadsTable(filtered);
@@ -433,14 +443,16 @@ async function renderLeads() {
 function renderLeadsTable(leads) {
   if (!leads.length) return emptyState("Nenhum lead encontrado", "Cadastre seu primeiro contato ou ajuste os filtros da busca.", "leads", "users");
   return `<div class="table-wrap"><table class="data-table">
-    <thead><tr><th>Lead</th><th>Contato</th><th>Origem</th><th>Entrada</th><th>Status</th><th>Comissão</th><th></th></tr></thead>
+    <thead><tr><th>Lead</th><th>Contato</th><th>Origem</th><th>Data contato</th><th>Vigência</th><th>Plano</th><th>Status</th><th>Comissão</th><th></th></tr></thead>
     <tbody>${leads.map((lead) => `<tr>
       <td><div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.email || "E-mail não informado")}</span></div></div></td>
       <td>${escapeHtml(lead.phone || "-")}</td>
       <td>${escapeHtml(lead.origin || "-")}</td>
-      <td>${formatDate(lead.entry_date)}</td>
+      <td>${formatDate(lead.contact_date)}</td>
+      <td>${formatDate(lead.effective_date)}</td>
+      <td><strong>${escapeHtml(lead.plan_name || "-")}</strong>${lead.plan_name ? `<br><span class="muted">${currency(lead.plan_value)} · ${Number(lead.commission_percent || 0)}%</span>` : ""}</td>
       <td>${badge(lead.status)}</td>
-      <td><strong>${currency(lead.commission)}</strong></td>
+      <td><strong>${currency(lead.commission)}</strong>${lead.has_bonus ? `<br><span class="bonus-label">+ ${currency(lead.bonus_value)} · ${escapeHtml(lead.bonus_description || "Premiação")}</span>` : ""}</td>
       <td><div class="actions">
         <button class="icon-button" data-followup-lead="${lead.id}" title="Criar follow-up">${icon("message")}</button>
         <button class="icon-button" data-edit="leads" data-id="${lead.id}" title="Editar">${icon("edit")}</button>
@@ -474,6 +486,7 @@ async function renderKanban() {
             ${cards.length ? cards.map((lead) => `<article class="kanban-card" draggable="true" data-lead-id="${lead.id}">
               <div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.origin || "Origem não informada")}</span></div></div>
               <div class="kanban-contact">${icon("phone")} ${escapeHtml(lead.phone || "Sem telefone")}</div>
+              ${lead.plan_name ? `<div class="kanban-plan">${escapeHtml(lead.plan_name)} · ${Number(lead.commission_percent || 0)}%</div>` : ""}
               <footer>
                 <strong>${currency(lead.commission)}</strong>
                 <select class="kanban-move" data-kanban-move="${lead.id}" aria-label="Mover ${escapeHtml(lead.name)} para">
@@ -627,6 +640,159 @@ function renderTasksTable(items) {
   </table></div>`;
 }
 
+function paymentTotal(lead) {
+  return Number(lead.commission || 0) + (lead.has_bonus ? Number(lead.bonus_value || 0) : 0);
+}
+
+function paymentDate(lead) {
+  return lead.contact_date || lead.entry_date || "";
+}
+
+async function renderPayments() {
+  const [leads, plans] = await Promise.all([ensureLeads(true), ensurePlans()]);
+  const payments = leads
+    .filter((lead) => lead.plan_name || lead.plan_id)
+    .sort((left, right) => paymentDate(right).localeCompare(paymentDate(left)));
+  state.collections.payments = payments;
+  $("#content").innerHTML = `
+    <section id="payments-summary" class="payment-stats-grid"></section>
+    <div class="section-toolbar payment-toolbar">
+      <div class="payment-filters">
+        <select id="payment-search-field" class="filter-select">
+          <option value="all">Todos</option>
+          <option value="client">Nome do cliente</option>
+          <option value="plan">Plano</option>
+          <option value="effective">Vigência</option>
+        </select>
+        <div class="search-field">${icon("search")}<input id="payment-search" placeholder="Pesquisar em todos os campos" /></div>
+        <select id="payment-plan-filter" class="filter-select">
+          <option value="">Todos os planos</option>
+          ${plans.map((plan) => `<option value="${escapeHtml(plan.name)}">${escapeHtml(plan.name)}</option>`).join("")}
+        </select>
+        <label class="date-filter"><span>De</span><input id="payment-date-from" type="date" /></label>
+        <label class="date-filter"><span>Até</span><input id="payment-date-to" type="date" /></label>
+      </div>
+      <button class="button button-secondary" id="export-payments">${icon("download")} Exportar Excel</button>
+    </div>
+    <div id="payments-table"></div>
+  `;
+
+  const applyFilters = () => {
+    const field = $("#payment-search-field").value;
+    const term = $("#payment-search").value.trim().toLowerCase();
+    const plan = $("#payment-plan-filter").value;
+    const from = $("#payment-date-from").value;
+    const to = $("#payment-date-to").value;
+    const filtered = payments.filter((lead) => {
+      const date = paymentDate(lead);
+      const values = {
+        client: lead.name || "",
+        plan: lead.plan_name || "",
+        effective: `${lead.effective_date || ""} ${formatDate(lead.effective_date)}`
+      };
+      const haystack = field === "all"
+        ? `${values.client} ${values.plan} ${values.effective} ${lead.contact_date || ""}`
+        : values[field] || "";
+      return (!term || haystack.toLowerCase().includes(term))
+        && (!plan || lead.plan_name === plan)
+        && (!from || date >= from)
+        && (!to || date <= to);
+    });
+    state.collections.filteredPayments = filtered;
+    renderPaymentsSummary(filtered);
+    $("#payments-table").innerHTML = renderPaymentsTable(filtered);
+  };
+
+  ["payment-search-field", "payment-search", "payment-plan-filter", "payment-date-from", "payment-date-to"]
+    .forEach((id) => $(`#${id}`).addEventListener(id === "payment-search" ? "input" : "change", applyFilters));
+  $("#payment-search-field").addEventListener("change", () => {
+    const labels = {
+      all: "Pesquisar em todos os campos",
+      client: "Digite o nome do cliente",
+      plan: "Digite o nome do plano",
+      effective: "Digite a data ou vigência"
+    };
+    $("#payment-search").placeholder = labels[$("#payment-search-field").value];
+  });
+  $("#export-payments").addEventListener("click", () => exportPaymentsXls(state.collections.filteredPayments || []));
+  applyFilters();
+}
+
+function renderPaymentsSummary(items) {
+  const commission = items.reduce((sum, item) => sum + Number(item.commission || 0), 0);
+  const bonuses = items.reduce((sum, item) => sum + (item.has_bonus ? Number(item.bonus_value || 0) : 0), 0);
+  $("#payments-summary").innerHTML = `
+    ${statCard("Total de comissões", currency(commission), `${items.length} pagamento(s) filtrado(s)`, "money", "#d9eee8")}
+    ${statCard("Total de premiações", currency(bonuses), "Valores adicionais", "check", "#fff0d8")}
+    ${statCard("Total geral", currency(commission + bonuses), "Comissões + premiações", "dashboard", "#e2f1c4")}
+  `;
+}
+
+function renderPaymentsTable(items) {
+  if (!items.length) return emptyState("Nenhum pagamento encontrado", "Ajuste os filtros ou vincule um plano a um lead.", null, "money");
+  return `<div class="table-wrap"><table class="data-table payment-table">
+    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>1ª parcela</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
+    <tbody>${items.map((lead) => `<tr>
+      <td>${formatDate(paymentDate(lead))}</td>
+      <td><strong>${escapeHtml(lead.name)}</strong><br><span class="muted">${escapeHtml(lead.phone || "")}</span></td>
+      <td>${escapeHtml(lead.plan_name || "-")}</td>
+      <td>${formatDate(lead.effective_date)}</td>
+      <td>${currency(lead.plan_value)}</td>
+      <td>${Number(lead.commission_percent || 0)}%</td>
+      <td><strong>${currency(lead.commission)}</strong></td>
+      <td>${lead.has_bonus ? `<strong>${currency(lead.bonus_value)}</strong><br><span class="muted">${escapeHtml(lead.bonus_description || "Premiação")}</span>` : currency(0)}</td>
+      <td><strong class="payment-total">${currency(paymentTotal(lead))}</strong></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function excelEscape(value) {
+  return escapeHtml(value == null ? "" : value);
+}
+
+function exportPaymentsXls(items) {
+  if (!items.length) return showToast("Não há pagamentos no filtro atual para exportar.", "error");
+  const commission = items.reduce((sum, item) => sum + Number(item.commission || 0), 0);
+  const bonuses = items.reduce((sum, item) => sum + (item.has_bonus ? Number(item.bonus_value || 0) : 0), 0);
+  const rows = items.map((lead) => `<tr>
+    <td class="date">${excelEscape(formatDate(paymentDate(lead), { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td>${excelEscape(lead.name)}</td>
+    <td>${excelEscape(lead.plan_name || "")}</td>
+    <td class="date">${excelEscape(formatDate(lead.effective_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td class="money">${Number(lead.plan_value || 0)}</td>
+    <td class="percent">${Number(lead.commission_percent || 0) / 100}</td>
+    <td class="money">${Number(lead.commission || 0)}</td>
+    <td class="money">${lead.has_bonus ? Number(lead.bonus_value || 0) : 0}</td>
+    <td>${excelEscape(lead.has_bonus ? lead.bonus_description || "Premiação" : "")}</td>
+    <td class="money">${paymentTotal(lead)}</td>
+  </tr>`).join("");
+  const html = `<!doctype html><html><head><meta charset="UTF-8"><style>
+    table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt}
+    th{background:#245c54;color:#fff;font-weight:bold}
+    th,td{border:1px solid #b7c7c2;padding:7px}
+    .title{background:#163f39;color:#fff;font-size:16pt}
+    .summary{background:#e8f3ef;font-weight:bold}
+    .money{mso-number-format:"R\\$ #,##0.00"}
+    .percent{mso-number-format:"0.00%"}
+    .date{mso-number-format:"dd/mm/yyyy"}
+  </style></head><body><table>
+    <tr><th class="title" colspan="10">Pagamentos e Premiações</th></tr>
+    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td></td></tr>
+    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>1ª parcela</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
+    ${rows}
+  </table></body></html>`;
+  const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `pagamentos-premiacoes-${new Date().toISOString().slice(0, 10)}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("Planilha Excel exportada.");
+}
+
 async function renderFollowup(preselectedLead = null) {
   const [leads, history] = await Promise.all([ensureLeads(), api("/api/followups")]);
   state.collections.followups = history;
@@ -705,13 +871,16 @@ const optionGroups = [
 
 const settingsSections = [
   ["leads", "Leads", "Origens e etapas do Kanban", "users"],
+  ["plans", "Planos", "Valores, comissões e premiações", "money"],
   ["pending", "Pendências", "Tipos e status", "alert"],
   ["tasks", "Tarefas", "Tipos, categorias e status", "check"]
 ];
 
 async function renderSettings() {
-  const options = await ensureOptions(true);
+  const [options, plans] = await Promise.all([ensureOptions(true), ensurePlans(true)]);
   state.options = options;
+  state.plans = plans;
+  state.collections.plans = plans;
   $("#content").innerHTML = `
     <section class="settings-layout">
       <aside class="settings-menu panel">
@@ -744,6 +913,23 @@ async function renderSettings() {
 }
 
 function renderSettingsSection() {
+  if (state.settingsSection === "plans") {
+    return `
+      <div class="settings-section-header settings-section-actions">
+        <div>
+          <span class="eyebrow eyebrow-dark">Regras comerciais</span>
+          <h2>Planos</h2>
+          <p class="muted">Cadastre a primeira parcela, percentual de comissão e possíveis premiações.</p>
+        </div>
+        <button class="button button-primary" data-new="plans">${icon("plus")} Novo plano</button>
+      </div>
+      <div class="plan-grid">
+        ${state.plans.length ? state.plans.map(renderPlanCard).join("") : `
+          <div class="panel empty-state"><div><h3>Nenhum plano cadastrado</h3><p>Cadastre o primeiro plano para vinculá-lo aos leads.</p><button class="button button-primary" data-new="plans">Cadastrar plano</button></div></div>
+        `}
+      </div>
+    `;
+  }
   const groups = optionGroups.filter(([group]) => group.startsWith(`${state.settingsSection}.`));
   const section = settingsSections.find(([id]) => id === state.settingsSection);
   return `
@@ -756,6 +942,30 @@ function renderSettingsSection() {
       ${groups.map(([group, module, title, description]) => renderOptionGroup(group, module, title, description)).join("")}
     </div>
   `;
+}
+
+function renderPlanCard(plan) {
+  return `<article class="panel plan-card">
+    <div class="card-top">
+      <div>
+        <span class="settings-module">Plano</span>
+        <h3>${escapeHtml(plan.name)}</h3>
+      </div>
+      <div class="actions">
+        <button class="icon-button" data-edit="plans" data-id="${plan.id}" title="Editar plano">${icon("edit")}</button>
+        <button class="icon-button" data-delete="plans" data-id="${plan.id}" title="Excluir plano">${icon("trash")}</button>
+      </div>
+    </div>
+    <div class="plan-values">
+      <div><span>Primeira parcela</span><strong>${currency(plan.installment_value)}</strong></div>
+      <div><span>Comissão</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
+      <div><span>Valor da comissão</span><strong>${currency(Number(plan.installment_value || 0) * Number(plan.commission_percent || 0) / 100)}</strong></div>
+    </div>
+    <div class="plan-bonus ${plan.has_bonus ? "active" : ""}">
+      <strong>${plan.has_bonus ? "Com premiação" : "Sem premiação"}</strong>
+      ${plan.has_bonus ? `<span>${escapeHtml(plan.bonus_description || "Premiação")} · ${currency(plan.bonus_value)}</span>` : ""}
+    </div>
+  </article>`;
 }
 
 function renderOptionGroup(group, module, title, description) {
@@ -797,6 +1007,18 @@ function bindSettingsEvents() {
 }
 
 const schemas = {
+  plans: {
+    title: "Plano",
+    endpoint: "plans",
+    fields: [
+      ["name", "Nome do plano", "text", true],
+      ["installment_value", "Valor da primeira parcela (R$)", "number", true],
+      ["commission_percent", "Percentual de comissão (%)", "number", true],
+      ["has_bonus", "Possui premiação?", "select", true, [["0", "Não"], ["1", "Sim"]]],
+      ["bonus_description", "Descrição da premiação", "text"],
+      ["bonus_value", "Valor da premiação (R$)", "number"]
+    ]
+  },
   leads: {
     title: "Lead",
     endpoint: "leads",
@@ -806,8 +1028,10 @@ const schemas = {
       ["email", "E-mail", "email"],
       ["origin", "Origem", "option", false, "leads.origin"],
       ["entry_date", "Data de entrada", "date", true],
+      ["contact_date", "Data de contato", "date"],
+      ["effective_date", "Data de vigência", "date"],
+      ["plan_id", "Plano escolhido", "plan"],
       ["status", "Status", "option", true, "leads.status"],
-      ["commission", "Comissão (R$)", "number"],
       ["notes", "Observações", "textarea", false, null, "full"]
     ]
   },
@@ -858,9 +1082,11 @@ async function openEntityForm(entity, item = null) {
   if (!schema) return;
   if (schema.fields.some((field) => field[2] === "option")) await ensureOptions();
   if (schema.fields.some((field) => field[2] === "lead")) await ensureLeads();
+  if (schema.fields.some((field) => field[2] === "plan")) await ensurePlans();
   $("#modal-title").textContent = `${item ? "Editar" : "Novo"} ${schema.title.toLowerCase()}`;
   $("#modal-body").innerHTML = `<form id="entity-form" class="entity-form">
     <div class="form-grid">${schema.fields.map((field) => renderField(field, item || {})).join("")}</div>
+    ${entity === "leads" ? `<div id="lead-plan-preview">${renderLeadPlanPreview(item?.plan_id)}</div>` : ""}
     <div class="form-actions">
       <button type="button" class="button button-secondary" data-close-modal>Cancelar</button>
       <button type="submit" class="button button-primary">${item ? "Salvar alterações" : "Cadastrar"}</button>
@@ -869,6 +1095,9 @@ async function openEntityForm(entity, item = null) {
   $("#modal").hidden = false;
   document.body.style.overflow = "hidden";
   setTimeout(() => $("#entity-form input, #entity-form select")?.focus(), 20);
+  $("#entity-form select[name='plan_id']")?.addEventListener("change", (event) => {
+    $("#lead-plan-preview").innerHTML = renderLeadPlanPreview(event.target.value);
+  });
   $("#entity-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = event.submitter;
@@ -878,7 +1107,11 @@ async function openEntityForm(entity, item = null) {
       if (key in data) data[key] = data[key] === "" ? null : Number(data[key]);
     });
     if ("lead_id" in data) data.lead_id = data.lead_id || null;
-    if ("commission" in data) data.commission = Number(String(data.commission).replace(",", ".") || 0);
+    if ("plan_id" in data) data.plan_id = data.plan_id || null;
+    ["installment_value", "commission_percent", "bonus_value"].forEach((key) => {
+      if (key in data) data[key] = Number(String(data[key]).replace(",", ".") || 0);
+    });
+    if ("has_bonus" in data) data.has_bonus = data.has_bonus === "1";
     try {
       await api(`/api/${schema.endpoint}${item ? `/${item.id}` : ""}`, {
         method: item ? "PUT" : "POST",
@@ -886,6 +1119,7 @@ async function openEntityForm(entity, item = null) {
       });
       closeModal();
       if (entity === "leads") state.leads = [];
+      if (entity === "plans") state.plans = [];
       showToast(`${schema.title} ${item ? "atualizado" : "cadastrado"} com sucesso.`);
       await navigate(state.view);
     } catch (error) {
@@ -899,21 +1133,29 @@ function renderField(field, item) {
   const [name, label, type, required, options, width] = field;
   const defaults = {
     entry_date: new Date().toISOString().slice(0, 10),
+    contact_date: new Date().toISOString().slice(0, 10),
     date: state.selectedDate,
     status: name === "status" ? undefined : "",
     priority: "Média",
     reminder: 30,
     completed: 0,
-    commission: 0
+    has_bonus: 0
   };
-  const value = item[name] ?? defaults[name] ?? "";
+  const value = name === "has_bonus"
+    ? (item[name] ? "1" : "0")
+    : item[name] ?? defaults[name] ?? "";
   const cls = width === "full" ? "field-full" : "";
   if (type === "textarea") {
     return `<label class="${cls}"><span>${label}</span><textarea name="${name}" ${required ? "required" : ""}>${escapeHtml(value)}</textarea></label>`;
   }
-  if (type === "select" || type === "lead" || type === "option") {
+  if (type === "select" || type === "lead" || type === "option" || type === "plan") {
     const rawOptions = type === "lead"
       ? state.leads.map((lead) => [String(lead.id), lead.name])
+      : type === "plan"
+        ? state.plans.map((plan) => [
+          String(plan.id),
+          `${plan.name} · ${currency(plan.installment_value)} · ${Number(plan.commission_percent || 0)}%`
+        ])
       : type === "option"
         ? optionValues(options)
         : options || [];
@@ -924,6 +1166,20 @@ function renderField(field, item) {
     </select></label>`;
   }
   return `<label class="${cls}"><span>${label}</span><input name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${type === "number" ? 'step="0.01" min="0"' : ""} /></label>`;
+}
+
+function renderLeadPlanPreview(planId) {
+  const plan = state.plans.find((item) => sameId(item.id, planId));
+  if (!plan) {
+    return `<div class="commission-preview muted">Selecione um plano para calcular a comissão automaticamente.</div>`;
+  }
+  const commission = Number(plan.installment_value || 0) * Number(plan.commission_percent || 0) / 100;
+  return `<div class="commission-preview">
+    <div><span>Primeira parcela</span><strong>${currency(plan.installment_value)}</strong></div>
+    <div><span>Percentual</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
+    <div><span>Comissão calculada</span><strong>${currency(commission)}</strong></div>
+    <div><span>Premiação</span><strong>${plan.has_bonus ? `${currency(plan.bonus_value)} · ${escapeHtml(plan.bonus_description || "Sim")}` : "Não"}</strong></div>
+  </div>`;
 }
 
 function closeModal() {
@@ -938,6 +1194,7 @@ async function deleteRecord(entity, id) {
   try {
     await api(`/api/${entity}/${id}`, { method: "DELETE" });
     if (entity === "leads") state.leads = [];
+    if (entity === "plans") state.plans = [];
     showToast(`${label} excluído.`);
     await navigate(state.view);
   } catch (error) {
