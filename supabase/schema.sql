@@ -2,6 +2,20 @@
 
 create extension if not exists pgcrypto;
 
+create table if not exists public.plans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  installment_value numeric(12,2) not null default 0,
+  commission_percent numeric(6,2) not null default 100,
+  has_bonus boolean not null default false,
+  bonus_description text,
+  bonus_value numeric(12,2) not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, name)
+);
+
 create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -10,12 +24,42 @@ create table if not exists public.leads (
   email text,
   origin text,
   entry_date date,
+  contact_date date,
+  effective_date date,
+  plan_id uuid references public.plans(id) on delete restrict,
+  plan_name text,
+  plan_value numeric(12,2) not null default 0,
+  commission_percent numeric(6,2) not null default 0,
   status text not null default 'Novo',
   commission numeric(12,2) not null default 0,
+  has_bonus boolean not null default false,
+  bonus_description text,
+  bonus_value numeric(12,2) not null default 0,
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.leads add column if not exists contact_date date;
+alter table public.leads add column if not exists effective_date date;
+alter table public.leads add column if not exists plan_id uuid;
+alter table public.leads add column if not exists plan_name text;
+alter table public.leads add column if not exists plan_value numeric(12,2) not null default 0;
+alter table public.leads add column if not exists commission_percent numeric(6,2) not null default 0;
+alter table public.leads add column if not exists has_bonus boolean not null default false;
+alter table public.leads add column if not exists bonus_description text;
+alter table public.leads add column if not exists bonus_value numeric(12,2) not null default 0;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'leads_plan_id_fkey'
+  ) then
+    alter table public.leads
+      add constraint leads_plan_id_fkey
+      foreign key (plan_id) references public.plans(id) on delete restrict;
+  end if;
+end $$;
 
 create table if not exists public.appointments (
   id uuid primary key default gen_random_uuid(),
@@ -81,11 +125,14 @@ create table if not exists public.option_values (
 );
 
 create index if not exists leads_user_status_idx on public.leads(user_id, status);
+create index if not exists leads_user_plan_idx on public.leads(user_id, plan_id);
+create index if not exists plans_user_name_idx on public.plans(user_id, name);
 create index if not exists appointments_user_date_idx on public.appointments(user_id, date);
 create index if not exists pending_user_due_idx on public.pending_items(user_id, due_date);
 create index if not exists tasks_user_date_idx on public.tasks(user_id, date);
 create index if not exists options_user_group_idx on public.option_values(user_id, module, field, sort_order);
 
+alter table public.plans enable row level security;
 alter table public.leads enable row level security;
 alter table public.appointments enable row level security;
 alter table public.pending_items enable row level security;
@@ -94,6 +141,7 @@ alter table public.followups enable row level security;
 alter table public.option_values enable row level security;
 
 grant select, insert, update, delete on table
+  public.plans,
   public.leads,
   public.appointments,
   public.pending_items,
@@ -107,7 +155,7 @@ declare
   table_name text;
 begin
   foreach table_name in array array[
-    'leads', 'appointments', 'pending_items', 'tasks',
+    'plans', 'leads', 'appointments', 'pending_items', 'tasks',
     'followups', 'option_values'
   ]
   loop
