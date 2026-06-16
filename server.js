@@ -58,6 +58,7 @@ db.exec(`
     has_bonus INTEGER NOT NULL DEFAULT 0,
     bonus_description TEXT,
     bonus_value REAL NOT NULL DEFAULT 0,
+    payment_status TEXT NOT NULL DEFAULT 'A receber',
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -142,7 +143,8 @@ const missingLeadColumns = [
   ["commission_percent", "REAL NOT NULL DEFAULT 0"],
   ["has_bonus", "INTEGER NOT NULL DEFAULT 0"],
   ["bonus_description", "TEXT"],
-  ["bonus_value", "REAL NOT NULL DEFAULT 0"]
+  ["bonus_value", "REAL NOT NULL DEFAULT 0"],
+  ["payment_status", "TEXT NOT NULL DEFAULT 'A receber'"]
 ];
 for (const [name, definition] of missingLeadColumns) {
   if (!leadColumns.has(name)) db.exec(`ALTER TABLE leads ADD COLUMN ${name} ${definition}`);
@@ -157,7 +159,13 @@ const optionDefaults = {
   "tasks.type": ["Ligação", "Reunião", "E-mail", "Administrativa", "Atendimento", "Outro"],
   "tasks.category": ["Comercial", "Operacional", "Financeiro", "Relacionamento", "Pessoal"],
   "tasks.priority": ["Baixa", "Média", "Alta"],
-  "tasks.status": ["Pendente", "Em andamento", "Concluída"]
+  "tasks.status": ["Pendente", "Em andamento", "Concluída"],
+  "payments.status": ["A receber", "Recebido", "Cancelado"],
+  "followup.template": [
+    "Olá, {nome}! Tudo bem? Estou passando para dar continuidade ao seu atendimento.",
+    "Olá, {nome}! Consegue me enviar os documentos pendentes para avançarmos?",
+    "Olá, {nome}! Sua vigência está próxima. Posso te ajudar com a renovação?"
+  ]
 };
 
 const insertOption = db.prepare(
@@ -189,7 +197,8 @@ const optionUsage = {
   "tasks.type": { table: "tasks", column: "type" },
   "tasks.category": { table: "tasks", column: "category" },
   "tasks.priority": { table: "tasks", column: "priority" },
-  "tasks.status": { table: "tasks", column: "status" }
+  "tasks.status": { table: "tasks", column: "status" },
+  "payments.status": { table: "leads", column: "payment_status" }
 };
 
 function getOptions() {
@@ -214,7 +223,7 @@ const entities = {
     fields: [
       "name", "phone", "email", "origin", "entry_date", "contact_date", "effective_date",
       "plan_id", "plan_name", "plan_value", "commission_percent", "status", "commission",
-      "has_bonus", "bonus_description", "bonus_value", "notes"
+      "has_bonus", "bonus_description", "bonus_value", "payment_status", "notes"
     ],
     required: ["name"]
   },

@@ -7,6 +7,9 @@ RECURSOS
 - Planos com nome e percentual de comissão
 - Valor fechado e premiação cadastrados individualmente no lead
 - Pagamentos com filtros, totais e exportação Excel
+- Relatórios mensais
+- Backup geral em Excel
+- Busca rápida, alertas, histórico do lead e modelos de mensagem
 - Pendências
 - Follow-up manual com envio pelo WhatsApp
 - Tarefas e Google Agenda

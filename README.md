@@ -1,7 +1,7 @@
 # Maikon CRM
 
 CRM com painel, agenda, leads, Kanban, pendências, follow-up manual, tarefas,
-pagamentos, premiações e configurações personalizadas.
+pagamentos, premiações, relatórios, backup e configurações personalizadas.
 
 ## Supabase
 
@@ -21,6 +21,9 @@ Nunca use a chave `service_role` no navegador.
 Se o CRM já estava funcionando antes da inclusão dos planos, execute o arquivo
 `supabase/ATUALIZAR-BANCO.sql`. Ele adiciona os novos campos, corrige o acesso das
 telas e não apaga os leads existentes.
+
+Execute novamente esse mesmo arquivo quando houver atualização de campos, como
+o **status financeiro** em pagamentos.
 
 ## Variáveis
 
@@ -109,3 +112,18 @@ mostra os totais de comissão, premiação e o total geral do filtro atual.
 
 O botão **Exportar Excel** gera um arquivo `.xls` com as linhas filtradas, datas,
 percentuais e valores monetários formatados.
+
+## Melhorias de Produtividade
+
+O CRM inclui:
+
+- busca rápida de clientes no topo;
+- alertas no painel para tarefas, pendências e vigências próximas;
+- filtros rápidos clicáveis no painel;
+- botão para converter lead em cliente;
+- histórico do lead com tarefas, pendências e follow-ups;
+- agendamento rápido de retorno, criando tarefa automaticamente;
+- modelos de mensagem em **Configurações → Follow-up**;
+- status financeiro em **Pagamentos**;
+- tela **Relatórios** com resumo mensal e exportação;
+- tela **Backup** para exportar os principais dados em Excel.
