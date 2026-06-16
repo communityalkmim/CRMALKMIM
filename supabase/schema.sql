@@ -31,6 +31,7 @@ create table if not exists public.leads (
   has_bonus boolean not null default false,
   bonus_description text,
   bonus_value numeric(12,2) not null default 0,
+  payment_status text not null default 'A receber',
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -45,6 +46,7 @@ alter table public.leads add column if not exists commission_percent numeric(6,2
 alter table public.leads add column if not exists has_bonus boolean not null default false;
 alter table public.leads add column if not exists bonus_description text;
 alter table public.leads add column if not exists bonus_value numeric(12,2) not null default 0;
+alter table public.leads add column if not exists payment_status text not null default 'A receber';
 
 do $$
 begin
@@ -209,6 +211,9 @@ begin
   elsif current_option.module = 'tasks' and current_option.field = 'status' then
     update public.tasks set status = clean_value
     where status = current_option.value;
+  elsif current_option.module = 'payments' and current_option.field = 'status' then
+    update public.leads set payment_status = clean_value, updated_at = now()
+    where payment_status = current_option.value;
   end if;
 
   update public.option_values
@@ -261,6 +266,8 @@ begin
     select count(*) into usage_count from public.tasks where priority = current_option.value;
   elsif current_option.module = 'tasks' and current_option.field = 'status' then
     select count(*) into usage_count from public.tasks where status = current_option.value;
+  elsif current_option.module = 'payments' and current_option.field = 'status' then
+    select count(*) into usage_count from public.leads where payment_status = current_option.value;
   end if;
 
   if usage_count > 0 then
