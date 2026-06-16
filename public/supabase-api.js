@@ -12,7 +12,13 @@ const optionDefaults = {
   "tasks.type": ["Ligação", "Reunião", "E-mail", "Administrativa", "Atendimento", "Outro"],
   "tasks.category": ["Comercial", "Operacional", "Financeiro", "Relacionamento", "Pessoal"],
   "tasks.priority": ["Baixa", "Média", "Alta"],
-  "tasks.status": ["Pendente", "Em andamento", "Concluída"]
+  "tasks.status": ["Pendente", "Em andamento", "Concluída"],
+  "payments.status": ["A receber", "Recebido", "Cancelado"],
+  "followup.template": [
+    "Olá, {nome}! Tudo bem? Estou passando para dar continuidade ao seu atendimento.",
+    "Olá, {nome}! Consegue me enviar os documentos pendentes para avançarmos?",
+    "Olá, {nome}! Sua vigência está próxima. Posso te ajudar com a renovação?"
+  ]
 };
 
 const entityConfig = {
@@ -82,19 +88,22 @@ function publicUser(user) {
 
 async function ensureDefaultOptions(userId) {
   const client = await getClient();
-  const { count, error } = await client
+  const { data: existing, error } = await client
     .from("option_values")
-    .select("id", { count: "exact", head: true });
+    .select("module, field, value");
   if (error) throw apiError(error);
-  if (count) return;
+  const known = new Set((existing || []).map((item) => `${item.module}.${item.field}.${item.value}`));
 
   const rows = [];
   for (const [group, values] of Object.entries(optionDefaults)) {
     const [module, field] = group.split(".");
     values.forEach((value, sortOrder) => {
-      rows.push({ user_id: userId, module, field, value, sort_order: sortOrder });
+      if (!known.has(`${module}.${field}.${value}`)) {
+        rows.push({ user_id: userId, module, field, value, sort_order: sortOrder });
+      }
     });
   }
+  if (!rows.length) return;
   const { error: insertError } = await client.from("option_values").insert(rows);
   if (insertError && insertError.code !== "23505") throw apiError(insertError);
 }
@@ -142,7 +151,8 @@ async function applyPlanRule(payload) {
       commission: 0,
       has_bonus: false,
       bonus_description: null,
-      bonus_value: 0
+      bonus_value: 0,
+      payment_status: "A receber"
     };
   }
   const client = await getClient();
@@ -166,7 +176,8 @@ async function applyPlanRule(payload) {
     commission: Math.round(planValue * commissionPercent) / 100,
     has_bonus: hasBonus,
     bonus_description: hasBonus ? payload.bonus_description || null : null,
-    bonus_value: bonusValue
+    bonus_value: bonusValue,
+    payment_status: payload.payment_status || "A receber"
   };
 }
 

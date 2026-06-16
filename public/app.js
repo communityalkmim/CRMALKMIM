@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260615-lead-values";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260616-improvements";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -14,7 +14,9 @@ const state = {
   collections: {},
   databaseNeedsUpdate: false,
   selectedDate: new Date().toISOString().slice(0, 10),
-  settingsSection: "leads"
+  settingsSection: "leads",
+  quickFilters: {},
+  globalLeadSearch: ""
 };
 
 const icons = {
@@ -54,6 +56,8 @@ const navItems = [
   ["followup", "Follow-up", "message"],
   ["tasks", "Tarefas", "check"],
   ["payments", "Pagamentos e Premiações", "money"],
+  ["reports", "Relatórios", "dashboard"],
+  ["backup", "Backup", "download"],
   ["settings", "Configurações", "settings"]
 ];
 
@@ -66,6 +70,8 @@ const viewInfo = {
   followup: { title: "Follow-up", kicker: "Relacionamento com clientes", action: "Criar mensagem", entity: null },
   tasks: { title: "Tarefas", kicker: "Organização do trabalho", action: "Nova tarefa", entity: "tasks" },
   payments: { title: "Pagamentos e Premiações", kicker: "Controle financeiro", action: "", entity: null },
+  reports: { title: "Relatórios", kicker: "Análise mensal", action: "", entity: null },
+  backup: { title: "Backup", kicker: "Exportação de dados", action: "", entity: null },
   settings: { title: "Configurações", kicker: "Personalização do CRM", action: "", entity: null }
 };
 
@@ -150,8 +156,8 @@ function currency(value) {
 
 function badge(status = "") {
   const value = status || "Não informado";
-  const green = ["Fechado", "Convertido", "Concluída", "Concluído", "Ativa", "Enviado"];
-  const red = ["Perdido", "Cancelada", "Atrasada", "Alta"];
+  const green = ["Fechado", "Convertido", "Concluída", "Concluído", "Ativa", "Enviado", "Recebido"];
+  const red = ["Perdido", "Cancelada", "Cancelado", "Atrasada", "Alta"];
   const blue = ["Novo", "Em contato", "Em andamento", "Agendada"];
   const cls = green.includes(value) ? "badge-green" : red.includes(value) ? "badge-red" : blue.includes(value) ? "badge-blue" : "badge-yellow";
   return `<span class="badge ${cls}">${escapeHtml(value)}</span>`;
@@ -251,6 +257,8 @@ async function navigate(view) {
       followup: renderFollowup,
       tasks: renderTasks,
       payments: renderPayments,
+      reports: renderReports,
+      backup: renderBackup,
       settings: renderSettings
     };
     await renderers[view]();
@@ -302,9 +310,16 @@ function emptyState(title, description, entity, iconName = "plus") {
 }
 
 async function renderDashboard() {
-  const data = await api("/api/dashboard");
+  await ensureOptions();
+  const [data, leads, tasks, pending] = await Promise.all([
+    api("/api/dashboard"),
+    ensureLeads(true),
+    api("/api/tasks"),
+    api("/api/pending")
+  ]);
   const maxFunnel = Math.max(...data.funnel.map((item) => Number(item.value)), 1);
   const colors = ["#245c54", "#6b9fed", "#eeb85d", "#74b7a8", "#e67979", "#9b7bd4"];
+  const alerts = dashboardAlerts(leads, tasks, pending);
   $("#content").innerHTML = `
     <div class="welcome-row">
       <div>
@@ -314,12 +329,13 @@ async function renderDashboard() {
       <button class="text-button" data-view="day">Ver agenda completa ${icon("chevron")}</button>
     </div>
     <section class="stats-grid">
-      ${statCard("Total de leads", data.stats.leads, "Base de contatos", "users", "#d9eee8")}
-      ${statCard("Em negociação", data.stats.newLeads, "Novos e em contato", "message", "#e9f0fb")}
-      ${statCard("Pendências", data.stats.pending, "Aguardando solução", "alert", "#fff0d8")}
-      ${statCard("Tarefas hoje", data.stats.tasksToday, "Itens ainda abertos", "check", "#f2eafb")}
-      ${statCard("Comissões", currency(data.stats.commission), "Leads fechados", "money", "#e2f1c4")}
+      ${statCard("Total de leads", data.stats.leads, "Base de contatos", "users", "#d9eee8", 'data-view="leads"')}
+      ${statCard("Em negociação", data.stats.newLeads, "Novos e em contato", "message", "#e9f0fb", 'data-quick-filter="lead-active"')}
+      ${statCard("Pendências", data.stats.pending, "Aguardando solução", "alert", "#fff0d8", 'data-quick-filter="pending-open"')}
+      ${statCard("Tarefas hoje", data.stats.tasksToday, "Itens ainda abertos", "check", "#f2eafb", 'data-quick-filter="tasks-today"')}
+      ${statCard("Comissões", currency(data.stats.commission), "Leads fechados", "money", "#e2f1c4", 'data-view="payments"')}
     </section>
+    ${renderDashboardAlerts(alerts)}
     <section class="dashboard-grid">
       <div class="panel">
         <div class="panel-header">
@@ -356,6 +372,7 @@ async function renderDashboard() {
         <div class="panel-header"><div><h3>Atalhos rápidos</h3><p>Registre uma atividade sem perder tempo</p></div></div>
         <div class="button-row">
           <button class="button button-secondary" data-new="leads">${icon("users")} Lead</button>
+          <button class="button button-secondary" data-quick-filter="lead-no-contact">${icon("phone")} Sem contato</button>
           <button class="button button-secondary" data-new="tasks">${icon("check")} Tarefa</button>
           <button class="button button-secondary" data-new="pending">${icon("alert")} Pendência</button>
           <button class="button button-secondary" data-view="followup">${icon("message")} Follow-up</button>
@@ -365,11 +382,54 @@ async function renderDashboard() {
   `;
 }
 
-function statCard(label, value, note, iconName, color) {
-  return `<article class="stat-card" style="--stat-color:${color}">
+function statCard(label, value, note, iconName, color, attrs = "") {
+  return `<article class="stat-card ${attrs ? "clickable-card" : ""}" style="--stat-color:${color}" ${attrs}>
     <div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(iconName)}</span></div>
     <strong>${value}</strong><small>${note}</small>
   </article>`;
+}
+
+function dashboardAlerts(leads, tasks, pending) {
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrowDate = new Date(`${today}T12:00:00`);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = tomorrowDate.toISOString().slice(0, 10);
+  const finalTask = terminalOption("tasks.status", "Concluída");
+  const finalPending = terminalOption("pending.status", "Concluída");
+  return [
+    { label: "Tarefas vencidas", value: tasks.filter((item) => item.date < today && item.status !== finalTask).length, filter: "tasks-overdue" },
+    { label: "Tarefas de hoje", value: tasks.filter((item) => item.date === today && item.status !== finalTask).length, filter: "tasks-today" },
+    { label: "Pendências vencidas", value: pending.filter((item) => item.due_date && item.due_date < today && item.status !== finalPending).length, filter: "pending-overdue" },
+    { label: "Vigências até amanhã", value: leads.filter((item) => item.effective_date && item.effective_date >= today && item.effective_date <= tomorrow).length, filter: "lead-renewal" }
+  ];
+}
+
+function renderDashboardAlerts(alerts) {
+  return `<section class="panel alerts-panel">
+    <div class="panel-header"><div><h3>Alertas rápidos</h3><p>Itens que merecem atenção agora</p></div></div>
+    <div class="alerts-grid">${alerts.map((item) => `
+      <button class="alert-card" data-quick-filter="${item.filter}">
+        <span>${escapeHtml(item.label)}</span>
+        <strong>${item.value}</strong>
+      </button>`).join("")}</div>
+  </section>`;
+}
+
+function applyQuickFilter(filter) {
+  state.quickFilters = {};
+  const map = {
+    "lead-active": ["leads", "active"],
+    "lead-no-contact": ["leads", "no-contact"],
+    "lead-renewal": ["leads", "renewal"],
+    "pending-open": ["pending", "open"],
+    "pending-overdue": ["pending", "overdue"],
+    "tasks-today": ["tasks", "today"],
+    "tasks-overdue": ["tasks", "overdue"]
+  };
+  const target = map[filter];
+  if (!target) return;
+  state.quickFilters[target[0]] = target[1];
+  navigate(target[0]);
 }
 
 function emptyMini(text) {
@@ -377,21 +437,27 @@ function emptyMini(text) {
 }
 
 async function renderDay() {
-  const appointments = await api("/api/appointments");
+  await ensureOptions();
+  const [appointments, tasks] = await Promise.all([api("/api/appointments"), api("/api/tasks")]);
   state.collections.appointments = appointments;
+  state.collections.tasks = tasks;
   const selected = state.selectedDate;
-  const selectedItems = appointments.filter((item) => item.date === selected);
+  const selectedAppointments = appointments.filter((item) => item.date === selected).map((item) => ({ ...item, day_kind: "appointment" }));
+  const selectedTasks = tasks.filter((item) => item.date === selected).map((item) => ({ ...item, day_kind: "task" }));
+  const selectedItems = [...selectedAppointments, ...selectedTasks]
+    .sort((left, right) => `${left.time || "99:99"}${left.title}`.localeCompare(`${right.time || "99:99"}${right.title}`));
+  const openTasks = selectedTasks.filter((item) => item.status !== terminalOption("tasks.status", "Concluída")).length;
   $("#content").innerHTML = `
     <div class="section-toolbar">
-      <div><strong>${formatDate(selected, { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</strong><p class="muted" style="font-size:11px;margin:4px 0 0">${selectedItems.length} compromisso(s) neste dia</p></div>
+      <div><strong>${formatDate(selected, { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}</strong><p class="muted" style="font-size:11px;margin:4px 0 0">${selectedAppointments.length} compromisso(s) · ${selectedTasks.length} tarefa(s) · ${openTasks} aberta(s)</p></div>
       <button class="button button-secondary" data-today>Ir para hoje</button>
     </div>
     <section class="agenda-layout">
       ${renderCalendar(selected)}
       <div class="panel agenda-panel">
-        <div class="panel-header"><div><h3>Agenda do dia</h3><p>Compromissos e lembretes programados</p></div></div>
-        ${selectedItems.length ? `<div class="card-list">${selectedItems.map(renderAppointment).join("")}</div>` :
-          emptyState("Dia livre na agenda", "Nenhum compromisso foi cadastrado para esta data.", "appointments", "calendar")}
+        <div class="panel-header"><div><h3>Agenda e tarefas do dia</h3><p>Compromissos, lembretes e atividades programadas</p></div></div>
+        ${selectedItems.length ? `<div class="card-list">${selectedItems.map(renderDayItem).join("")}</div>` :
+          emptyState("Dia livre na agenda", "Nenhum compromisso ou tarefa foi cadastrado para esta data.", "appointments", "calendar")}
       </div>
     </section>
   `;
@@ -433,6 +499,28 @@ function renderAppointment(item) {
   </article>`;
 }
 
+function renderDayItem(item) {
+  return item.day_kind === "task" ? renderDayTask(item) : renderAppointment(item);
+}
+
+function renderDayTask(item) {
+  const done = item.status === terminalOption("tasks.status", "Concluída");
+  return `<article class="agenda-card task-agenda-card">
+    <div class="agenda-time">${escapeHtml(item.time || "--:--")}</div>
+    <i class="agenda-stripe" style="background:${done ? "#65a994" : item.priority === "Alta" ? "#df6969" : "#6b9fed"}"></i>
+    <div class="agenda-detail">
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.lead_name || "Sem cliente")} · ${escapeHtml(item.type || "Tarefa")}${item.category ? ` · ${escapeHtml(item.category)}` : ""}${item.notes ? ` · ${escapeHtml(item.notes)}` : ""}</span>
+    </div>
+    <div class="actions">
+      <button class="icon-button google-calendar-button" data-google-calendar="${item.id}" title="Adicionar ao Google Agenda" aria-label="Adicionar ${escapeHtml(item.title)} ao Google Agenda">${icon("calendar")}</button>
+      ${!done ? `<button class="icon-button" data-complete-task="${item.id}" title="Concluir tarefa">${icon("check")}</button>` : ""}
+      <button class="icon-button" data-edit="tasks" data-id="${item.id}" title="Editar tarefa">${icon("edit")}</button>
+      <button class="icon-button" data-delete="tasks" data-id="${item.id}" title="Excluir tarefa">${icon("trash")}</button>
+    </div>
+  </article>`;
+}
+
 async function renderLeads() {
   const [leads] = await Promise.all([ensureLeads(true), ensureOptions(), ensurePlans()]);
   state.collections.leads = leads;
@@ -440,7 +528,7 @@ async function renderLeads() {
     ${databaseUpdateNotice()}
     <div class="section-toolbar">
       <div class="filter-group">
-        <div class="search-field">${icon("search")}<input id="lead-search" placeholder="Buscar por nome, telefone ou e-mail" /></div>
+        <div class="search-field">${icon("search")}<input id="lead-search" placeholder="Buscar por nome, telefone ou e-mail" value="${escapeHtml(state.globalLeadSearch)}" /></div>
         <select id="lead-status-filter" class="filter-select">
           <option value="">Todos os status</option>
           ${optionValues("leads.status").map((s) => `<option>${escapeHtml(s)}</option>`).join("")}
@@ -453,15 +541,25 @@ async function renderLeads() {
   const filter = () => {
     const term = $("#lead-search").value.toLowerCase();
     const status = $("#lead-status-filter").value;
+    const today = new Date().toISOString().slice(0, 10);
+    const tomorrowDate = new Date(`${today}T12:00:00`);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrow = tomorrowDate.toISOString().slice(0, 10);
     const filtered = leads.filter((lead) => {
       const haystack = `${lead.name} ${lead.phone || ""} ${lead.email || ""} ${lead.plan_name || ""}`.toLowerCase();
-      return haystack.includes(term) && (!status || lead.status === status);
+      const quick = state.quickFilters.leads;
+      return haystack.includes(term)
+        && (!status || lead.status === status)
+        && (quick !== "active" || optionValues("leads.status").slice(0, 2).includes(lead.status))
+        && (quick !== "no-contact" || !lead.contact_date)
+        && (quick !== "renewal" || (lead.effective_date && lead.effective_date >= today && lead.effective_date <= tomorrow));
     });
     $("#leads-table").innerHTML = renderLeadsTable(filtered);
     $("#lead-count").textContent = `${filtered.length} lead(s)`;
   };
   $("#lead-search").addEventListener("input", filter);
   $("#lead-status-filter").addEventListener("change", filter);
+  if (state.quickFilters.leads || state.globalLeadSearch) filter();
 }
 
 function renderLeadsTable(leads) {
@@ -478,6 +576,9 @@ function renderLeadsTable(leads) {
       <td>${badge(lead.status)}</td>
       <td><strong>${currency(lead.commission)}</strong>${lead.has_bonus ? `<br><span class="bonus-label">+ ${currency(lead.bonus_value)} · ${escapeHtml(lead.bonus_description || "Premiação")}</span>` : ""}</td>
       <td><div class="actions">
+        <button class="icon-button" data-convert-lead="${lead.id}" title="Converter em cliente">${icon("check")}</button>
+        <button class="icon-button" data-schedule-return="${lead.id}" title="Agendar retorno">${icon("clock")}</button>
+        <button class="icon-button" data-history-lead="${lead.id}" title="Histórico do lead">${icon("dashboard")}</button>
         <button class="icon-button" data-followup-lead="${lead.id}" title="Criar follow-up">${icon("message")}</button>
         <button class="icon-button" data-edit="leads" data-id="${lead.id}" title="Editar">${icon("edit")}</button>
         <button class="icon-button" data-delete="leads" data-id="${lead.id}" title="Excluir">${icon("trash")}</button>
@@ -602,11 +703,18 @@ async function renderPending() {
   const apply = () => {
     const term = $("#pending-search").value.toLowerCase();
     const status = $("#pending-filter").value;
-    const filtered = items.filter((item) => `${item.type} ${item.description || ""} ${item.lead_name}`.toLowerCase().includes(term) && (!status || item.status === status));
+    const today = new Date().toISOString().slice(0, 10);
+    const quick = state.quickFilters.pending;
+    const finalPending = terminalOption("pending.status", "Concluída");
+    const filtered = items.filter((item) => `${item.type} ${item.description || ""} ${item.lead_name}`.toLowerCase().includes(term)
+      && (!status || item.status === status)
+      && (quick !== "open" || item.status !== finalPending)
+      && (quick !== "overdue" || (item.due_date && item.due_date < today && item.status !== finalPending)));
     $("#pending-list").innerHTML = renderPendingCards(filtered);
   };
   $("#pending-search").addEventListener("input", apply);
   $("#pending-filter").addEventListener("change", apply);
+  if (state.quickFilters.pending) apply();
 }
 
 function renderPendingCards(items) {
@@ -637,10 +745,17 @@ async function renderTasks() {
   const apply = () => {
     const term = $("#task-search").value.toLowerCase();
     const status = $("#task-filter").value;
-    $("#tasks-table").innerHTML = renderTasksTable(items.filter((item) => `${item.title} ${item.category || ""} ${item.lead_name || ""}`.toLowerCase().includes(term) && (!status || item.status === status)));
+    const today = new Date().toISOString().slice(0, 10);
+    const finalTask = terminalOption("tasks.status", "Concluída");
+    const quick = state.quickFilters.tasks;
+    $("#tasks-table").innerHTML = renderTasksTable(items.filter((item) => `${item.title} ${item.category || ""} ${item.lead_name || ""}`.toLowerCase().includes(term)
+      && (!status || item.status === status)
+      && (quick !== "today" || (item.date === today && item.status !== finalTask))
+      && (quick !== "overdue" || (item.date < today && item.status !== finalTask))));
   };
   $("#task-search").addEventListener("input", apply);
   $("#task-filter").addEventListener("change", apply);
+  if (state.quickFilters.tasks) apply();
 }
 
 function renderTasksTable(items) {
@@ -673,7 +788,7 @@ function paymentDate(lead) {
 }
 
 async function renderPayments() {
-  const [leads, plans] = await Promise.all([ensureLeads(true), ensurePlans()]);
+  const [leads, plans] = await Promise.all([ensureLeads(true), ensurePlans(), ensureOptions()]);
   const payments = leads
     .filter((lead) => lead.plan_name || lead.plan_id)
     .sort((left, right) => paymentDate(right).localeCompare(paymentDate(left)));
@@ -694,6 +809,10 @@ async function renderPayments() {
           <option value="">Todos os planos</option>
           ${plans.map((plan) => `<option value="${escapeHtml(plan.name)}">${escapeHtml(plan.name)}</option>`).join("")}
         </select>
+        <select id="payment-status-filter" class="filter-select">
+          <option value="">Todos os status financeiros</option>
+          ${optionValues("payments.status").map((status) => `<option>${escapeHtml(status)}</option>`).join("")}
+        </select>
         <label class="date-filter"><span>De</span><input id="payment-date-from" type="date" /></label>
         <label class="date-filter"><span>Até</span><input id="payment-date-to" type="date" /></label>
       </div>
@@ -706,6 +825,7 @@ async function renderPayments() {
     const field = $("#payment-search-field").value;
     const term = $("#payment-search").value.trim().toLowerCase();
     const plan = $("#payment-plan-filter").value;
+    const paymentStatus = $("#payment-status-filter").value;
     const from = $("#payment-date-from").value;
     const to = $("#payment-date-to").value;
     const filtered = payments.filter((lead) => {
@@ -720,6 +840,7 @@ async function renderPayments() {
         : values[field] || "";
       return (!term || haystack.toLowerCase().includes(term))
         && (!plan || lead.plan_name === plan)
+        && (!paymentStatus || (lead.payment_status || "A receber") === paymentStatus)
         && (!from || date >= from)
         && (!to || date <= to);
     });
@@ -728,7 +849,7 @@ async function renderPayments() {
     $("#payments-table").innerHTML = renderPaymentsTable(filtered);
   };
 
-  ["payment-search-field", "payment-search", "payment-plan-filter", "payment-date-from", "payment-date-to"]
+  ["payment-search-field", "payment-search", "payment-plan-filter", "payment-status-filter", "payment-date-from", "payment-date-to"]
     .forEach((id) => $(`#${id}`).addEventListener(id === "payment-search" ? "input" : "change", applyFilters));
   $("#payment-search-field").addEventListener("change", () => {
     const labels = {
@@ -756,12 +877,13 @@ function renderPaymentsSummary(items) {
 function renderPaymentsTable(items) {
   if (!items.length) return emptyState("Nenhum pagamento encontrado", "Ajuste os filtros ou vincule um plano a um lead.", null, "money");
   return `<div class="table-wrap"><table class="data-table payment-table">
-    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
+    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Status financeiro</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
     <tbody>${items.map((lead) => `<tr>
       <td>${formatDate(paymentDate(lead))}</td>
       <td><strong>${escapeHtml(lead.name)}</strong><br><span class="muted">${escapeHtml(lead.phone || "")}</span></td>
       <td>${escapeHtml(lead.plan_name || "-")}</td>
       <td>${formatDate(lead.effective_date)}</td>
+      <td>${badge(lead.payment_status || "A receber")}</td>
       <td>${currency(lead.plan_value)}</td>
       <td>${Number(lead.commission_percent || 0)}%</td>
       <td><strong>${currency(lead.commission)}</strong></td>
@@ -784,6 +906,7 @@ function exportPaymentsXls(items) {
     <td>${excelEscape(lead.name)}</td>
     <td>${excelEscape(lead.plan_name || "")}</td>
     <td class="date">${excelEscape(formatDate(lead.effective_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td>${excelEscape(lead.payment_status || "A receber")}</td>
     <td class="money">${Number(lead.plan_value || 0)}</td>
     <td class="percent">${Number(lead.commission_percent || 0) / 100}</td>
     <td class="money">${Number(lead.commission || 0)}</td>
@@ -801,9 +924,9 @@ function exportPaymentsXls(items) {
     .percent{mso-number-format:"0.00%"}
     .date{mso-number-format:"dd/mm/yyyy"}
   </style></head><body><table>
-    <tr><th class="title" colspan="10">Pagamentos e Premiações</th></tr>
-    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td></td></tr>
-    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
+    <tr><th class="title" colspan="11">Pagamentos e Premiações</th></tr>
+    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="2"></td></tr>
+    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Status financeiro</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
     ${rows}
   </table></body></html>`;
   const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
@@ -818,8 +941,131 @@ function exportPaymentsXls(items) {
   showToast("Planilha Excel exportada.");
 }
 
+async function renderReports() {
+  const leads = await ensureLeads(true);
+  const months = [...new Set(leads.map((lead) => String(paymentDate(lead) || lead.entry_date || "").slice(0, 7)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+  const selected = state.reportMonth || months[0] || new Date().toISOString().slice(0, 7);
+  state.reportMonth = selected;
+  const items = leads.filter((lead) => String(paymentDate(lead) || lead.entry_date || "").startsWith(selected));
+  state.collections.reportItems = items;
+  $("#content").innerHTML = `
+    <div class="section-toolbar">
+      <div><strong>Relatório mensal</strong><p class="muted" style="font-size:11px;margin:4px 0 0">Comissões, planos vendidos e origens do mês.</p></div>
+      <div class="payment-filters">
+        <input id="report-month" type="month" value="${escapeHtml(selected)}" />
+        <button class="button button-secondary" id="export-report">${icon("download")} Exportar relatório</button>
+      </div>
+    </div>
+    <section class="payment-stats-grid">
+      ${statCard("Leads no mês", items.length, "Entradas e contatos", "users", "#d9eee8")}
+      ${statCard("Comissões", currency(items.reduce((sum, item) => sum + Number(item.commission || 0), 0)), "Total calculado", "money", "#e2f1c4")}
+      ${statCard("Premiações", currency(items.reduce((sum, item) => sum + (item.has_bonus ? Number(item.bonus_value || 0) : 0), 0)), "Valores adicionais", "check", "#fff0d8")}
+    </section>
+    <section class="dashboard-grid">
+      <div class="panel"><div class="panel-header"><div><h3>Planos vendidos</h3><p>Quantidade por plano</p></div></div>${renderCountList(countByField(items, "plan_name", "Sem plano"))}</div>
+      <div class="panel"><div class="panel-header"><div><h3>Status dos leads</h3><p>Distribuição do mês</p></div></div>${renderCountList(countByField(items, "status", "Sem status"))}</div>
+      <div class="panel"><div class="panel-header"><div><h3>Origem dos leads</h3><p>Canais que trouxeram clientes</p></div></div>${renderCountList(countByField(items, "origin", "Não informada"))}</div>
+    </section>
+  `;
+  $("#report-month").addEventListener("change", (event) => {
+    state.reportMonth = event.target.value;
+    renderReports();
+  });
+  $("#export-report").addEventListener("click", () => exportReportXls(state.collections.reportItems || [], state.reportMonth));
+}
+
+function countByField(items, field, fallback) {
+  const counts = new Map();
+  items.forEach((item) => {
+    const key = item[field] || fallback;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return [...counts.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+}
+
+function renderCountList(items) {
+  if (!items.length) return emptyMini("Sem dados para o filtro atual.");
+  return `<div class="origin-list">${items.map((item) => `<div class="origin-row"><i></i><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong></div>`).join("")}</div>`;
+}
+
+function exportReportXls(items, month) {
+  if (!items.length) return showToast("Não há dados para exportar neste mês.", "error");
+  exportSimpleXls(`relatorio-${month}.xls`, "Relatório mensal", [
+    ["Cliente", "Plano", "Data contato", "Vigência", "Status", "Status financeiro", "Valor", "Comissão", "Premiação", "Total"],
+    ...items.map((lead) => [
+      lead.name, lead.plan_name || "", formatDate(paymentDate(lead)), formatDate(lead.effective_date),
+      lead.status, lead.payment_status || "A receber", currency(lead.plan_value),
+      currency(lead.commission), currency(lead.has_bonus ? lead.bonus_value : 0), currency(paymentTotal(lead))
+    ])
+  ]);
+}
+
+async function renderBackup() {
+  $("#content").innerHTML = `
+    <section class="panel backup-panel">
+      <div class="panel-header"><div><h3>Backup dos dados</h3><p>Exporta os principais cadastros do CRM para Excel.</p></div><span class="stat-icon">${icon("download")}</span></div>
+      <p class="muted">Use antes de grandes alterações no Supabase ou como cópia periódica de segurança. O arquivo gerado não apaga nem altera nenhum dado.</p>
+      <div class="button-row">
+        <button class="button button-primary" id="export-backup">${icon("download")} Exportar backup geral</button>
+        <button class="button button-secondary" data-view="reports">${icon("dashboard")} Ver relatórios</button>
+      </div>
+    </section>
+  `;
+  $("#export-backup").addEventListener("click", exportBackupXls);
+}
+
+async function exportBackupXls() {
+  const [leads, plans, tasks, pending, appointments, followups] = await Promise.all([
+    ensureLeads(true),
+    ensurePlans(true),
+    api("/api/tasks"),
+    api("/api/pending"),
+    api("/api/appointments"),
+    api("/api/followups")
+  ]);
+  const sections = [
+    ["Leads", ["Nome", "Telefone", "E-mail", "Origem", "Status", "Plano", "Valor", "Comissão", "Premiação"], leads.map((item) => [item.name, item.phone, item.email, item.origin, item.status, item.plan_name, currency(item.plan_value), currency(item.commission), currency(item.has_bonus ? item.bonus_value : 0)])],
+    ["Planos", ["Nome", "Comissão %"], plans.map((item) => [item.name, item.commission_percent])],
+    ["Tarefas", ["Título", "Cliente", "Data", "Hora", "Prioridade", "Status"], tasks.map((item) => [item.title, item.lead_name, item.date, item.time, item.priority, item.status])],
+    ["Pendências", ["Tipo", "Cliente", "Prazo", "Prioridade", "Status"], pending.map((item) => [item.type, item.lead_name, item.due_date, item.priority, item.status])],
+    ["Agenda", ["Título", "Cliente", "Data", "Hora", "Concluído"], appointments.map((item) => [item.title, item.lead_name, item.date, item.time, item.completed ? "Sim" : "Não"])],
+    ["Follow-ups", ["Cliente", "Canal", "Status", "Mensagem", "Criado em"], followups.map((item) => [item.lead_name, item.channel, item.status, item.message, formatDateTime(item.created_at)])]
+  ];
+  exportMultiSectionXls(`backup-crm-${new Date().toISOString().slice(0, 10)}.xls`, sections);
+  showToast("Backup exportado.");
+}
+
+function exportSimpleXls(filename, title, rows) {
+  exportMultiSectionXls(filename, [[title, rows[0], rows.slice(1)]]);
+}
+
+function exportMultiSectionXls(filename, sections) {
+  const tables = sections.map(([title, headers, rows]) => `
+    <tr><th class="title" colspan="${headers.length}">${excelEscape(title)}</th></tr>
+    <tr>${headers.map((head) => `<th>${excelEscape(head)}</th>`).join("")}</tr>
+    ${rows.map((row) => `<tr>${row.map((cell) => `<td>${excelEscape(cell)}</td>`).join("")}</tr>`).join("")}
+    <tr>${headers.map(() => "<td></td>").join("")}</tr>
+  `).join("");
+  const html = `<!doctype html><html><head><meta charset="UTF-8"><style>
+    table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt}
+    th{background:#245c54;color:#fff;font-weight:bold}
+    th,td{border:1px solid #b7c7c2;padding:7px}
+    .title{background:#163f39;color:#fff;font-size:15pt}
+  </style></head><body><table>${tables}</table></body></html>`;
+  const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function renderFollowup(preselectedLead = null) {
-  const [leads, history] = await Promise.all([ensureLeads(), api("/api/followups")]);
+  const [leads, history] = await Promise.all([ensureLeads(), api("/api/followups"), ensureOptions()]);
   state.collections.followups = history;
   const selected = preselectedLead || state.followupLead || leads[0]?.id || "";
   state.followupLead = selected;
@@ -829,6 +1075,7 @@ async function renderFollowup(preselectedLead = null) {
         <div class="panel-header"><div><h3>Mensagem para o cliente</h3><p>Escreva, salve e envie pelo WhatsApp</p></div><span class="stat-icon">${icon("message")}</span></div>
         ${leads.length ? `<div class="form-stack">
           <label><span>Cliente</span><select id="followup-lead">${leads.map((lead) => `<option value="${lead.id}" ${sameId(selected, lead.id) ? "selected" : ""}>${escapeHtml(lead.name)} · ${escapeHtml(lead.status)}</option>`).join("")}</select></label>
+          <label><span>Modelo de mensagem</span><select id="followup-template"><option value="">Escrever do zero</option>${optionValues("followup.template").map((template) => `<option value="${escapeHtml(template)}">${escapeHtml(template.slice(0, 80))}${template.length > 80 ? "..." : ""}</option>`).join("")}</select></label>
           <label><span>Mensagem</span><textarea id="followup-message" placeholder="Digite a mensagem para o cliente."></textarea></label>
           <div class="button-row">
             <button class="button button-secondary" id="copy-message">${icon("copy")} Copiar</button>
@@ -853,6 +1100,12 @@ async function renderFollowup(preselectedLead = null) {
 function bindFollowupEvents() {
   if (!$("#followup-lead")) return;
   $("#followup-lead").addEventListener("change", (event) => { state.followupLead = event.target.value; });
+  $("#followup-template")?.addEventListener("change", () => {
+    const template = $("#followup-template").value;
+    if (!template) return;
+    const lead = state.leads.find((item) => sameId(item.id, $("#followup-lead").value));
+    $("#followup-message").value = applyMessageTemplate(template, lead);
+  });
   $("#copy-message").addEventListener("click", async () => {
     const text = $("#followup-message").value.trim();
     if (!text) return showToast("Crie uma mensagem primeiro.", "error");
@@ -873,6 +1126,14 @@ function bindFollowupEvents() {
   $("#send-whatsapp").addEventListener("click", () => openWhatsApp($("#followup-lead").value, $("#followup-message").value));
 }
 
+function applyMessageTemplate(template, lead = {}) {
+  return String(template || "")
+    .replaceAll("{nome}", lead.name || "")
+    .replaceAll("{plano}", lead.plan_name || "")
+    .replaceAll("{vigencia}", formatDate(lead.effective_date))
+    .replaceAll("{valor}", currency(lead.plan_value || 0));
+}
+
 function openWhatsApp(leadId, message) {
   const lead = state.leads.find((item) => sameId(item.id, leadId));
   if (!lead) return showToast("Lead não encontrado.", "error");
@@ -891,12 +1152,16 @@ const optionGroups = [
   ["tasks.type", "Tarefas", "Tipos", "Tipos de atividade"],
   ["tasks.category", "Tarefas", "Categorias", "Áreas de organização"],
   ["tasks.priority", "Tarefas", "Prioridades", "Níveis de importância"],
-  ["tasks.status", "Tarefas", "Status", "Situações das tarefas"]
+  ["tasks.status", "Tarefas", "Status", "Situações das tarefas"],
+  ["payments.status", "Pagamentos", "Status financeiro", "Situações de recebimento"],
+  ["followup.template", "Follow-up", "Modelos de mensagem", "Textos prontos para WhatsApp"]
 ];
 
 const settingsSections = [
   ["leads", "Leads", "Origens e etapas do Kanban", "users"],
-  ["plans", "Planos", "Valores, comissões e premiações", "money"],
+  ["plans", "Planos", "Nome e comissão", "money"],
+  ["payments", "Pagamentos", "Status financeiro", "money"],
+  ["followup", "Follow-up", "Modelos de mensagem", "message"],
   ["pending", "Pendências", "Tipos e status", "alert"],
   ["tasks", "Tarefas", "Tipos, categorias e status", "check"]
 ];
@@ -1052,6 +1317,7 @@ const schemas = {
       ["has_bonus", "Possui premiação?", "select", true, [["0", "Não"], ["1", "Sim"]]],
       ["bonus_description", "Descrição da premiação", "text"],
       ["bonus_value", "Valor da premiação (R$)", "number"],
+      ["payment_status", "Status financeiro", "option", true, "payments.status"],
       ["status", "Status", "option", true, "leads.status"],
       ["notes", "Observações", "textarea", false, null, "full"]
     ]
@@ -1249,6 +1515,77 @@ async function deleteRecord(entity, id) {
   }
 }
 
+async function convertLead(id) {
+  const lead = state.leads.find((item) => sameId(item.id, id));
+  if (!lead) return showToast("Lead não encontrado.", "error");
+  const closedStatus = optionValues("leads.status").find((item) => ["Fechado", "Convertido", "Cliente"].includes(item)) || "Fechado";
+  await api(`/api/leads/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: closedStatus, payment_status: lead.payment_status || "A receber" })
+  });
+  state.leads = [];
+  showToast(`${lead.name} convertido em cliente.`);
+  await navigate(state.view);
+}
+
+async function scheduleReturn(id) {
+  const lead = state.leads.find((item) => sameId(item.id, id));
+  if (!lead) return showToast("Lead não encontrado.", "error");
+  const date = window.prompt("Data do retorno (AAAA-MM-DD):", new Date().toISOString().slice(0, 10))?.trim();
+  if (!date) return;
+  const time = window.prompt("Horário do retorno (HH:MM):", "09:00")?.trim() || "09:00";
+  await api("/api/tasks", {
+    method: "POST",
+    body: JSON.stringify({
+      title: `Retorno para ${lead.name}`,
+      type: "Ligação",
+      category: "Relacionamento",
+      lead_id: lead.id,
+      date,
+      time,
+      priority: "Média",
+      status: terminalOption("tasks.status", "Pendente"),
+      notes: "Retorno agendado pelo cadastro do lead."
+    })
+  });
+  showToast("Retorno agendado em Tarefas e Meu dia.");
+}
+
+async function openLeadHistory(id) {
+  const lead = state.leads.find((item) => sameId(item.id, id));
+  if (!lead) return showToast("Lead não encontrado.", "error");
+  const [tasks, pending, followups] = await Promise.all([
+    api("/api/tasks"),
+    api("/api/pending"),
+    api("/api/followups")
+  ]);
+  state.collections.tasks = tasks;
+  state.collections.pending = pending;
+  state.collections.followups = followups;
+  const events = [
+    { date: lead.entry_date || lead.created_at, title: "Entrada do lead", text: `${lead.origin || "Origem não informada"} · ${lead.status}` },
+    lead.contact_date ? { date: lead.contact_date, title: "Contato", text: "Data de contato registrada" } : null,
+    lead.effective_date ? { date: lead.effective_date, title: "Vigência", text: lead.plan_name || "Sem plano" } : null,
+    ...tasks.filter((item) => sameId(item.lead_id, id)).map((item) => ({ date: item.date, title: `Tarefa: ${item.title}`, text: `${item.status} · ${item.priority}` })),
+    ...pending.filter((item) => sameId(item.lead_id, id)).map((item) => ({ date: item.due_date || item.created_at, title: `Pendência: ${item.type}`, text: `${item.status} · ${item.description || ""}` })),
+    ...followups.filter((item) => sameId(item.lead_id, id)).map((item) => ({ date: item.created_at, title: "Follow-up", text: item.message }))
+  ].filter(Boolean).sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  $("#modal-title").textContent = `Histórico de ${lead.name}`;
+  $("#modal-body").innerHTML = `<div class="history-panel">
+    <div class="lead-summary">
+      <strong>${escapeHtml(lead.name)}</strong>
+      <span>${escapeHtml(lead.phone || "Sem telefone")} · ${escapeHtml(lead.email || "Sem e-mail")}</span>
+      <span>${escapeHtml(lead.plan_name || "Sem plano")} · ${currency(lead.plan_value)} · ${badge(lead.payment_status || "A receber")}</span>
+    </div>
+    <div class="timeline">${events.map((item) => `<div class="timeline-item">
+      <span class="timeline-time">${formatDate(item.date)}</span>
+      <div class="timeline-detail"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.text || "")}</span></div>
+    </div>`).join("")}</div>
+  </div>`;
+  $("#modal").hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
 function showLogin() {
   state.user = null;
   $("#app").hidden = true;
@@ -1321,7 +1658,21 @@ $("#primary-action").addEventListener("click", () => {
   }
 });
 
+$("#global-search")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const value = event.currentTarget.value.trim();
+  if (!value) return;
+  state.globalLeadSearch = value;
+  state.quickFilters = {};
+  navigate("leads");
+});
+
 $("#content").addEventListener("click", async (event) => {
+  const quickFilter = event.target.closest("[data-quick-filter]");
+  if (quickFilter) {
+    applyQuickFilter(quickFilter.dataset.quickFilter);
+    return;
+  }
   const googleCalendar = event.target.closest("[data-google-calendar]");
   if (googleCalendar) {
     const task = state.collections.tasks?.find(
@@ -1390,6 +1741,12 @@ $("#content").addEventListener("click", async (event) => {
   }
   const remove = event.target.closest("[data-delete]");
   if (remove) return deleteRecord(remove.dataset.delete, remove.dataset.id);
+  const convert = event.target.closest("[data-convert-lead]");
+  if (convert) return convertLead(convert.dataset.convertLead);
+  const schedule = event.target.closest("[data-schedule-return]");
+  if (schedule) return scheduleReturn(schedule.dataset.scheduleReturn);
+  const history = event.target.closest("[data-history-lead]");
+  if (history) return openLeadHistory(history.dataset.historyLead);
   const followup = event.target.closest("[data-followup-lead]");
   if (followup) {
     state.followupLead = followup.dataset.followupLead;
@@ -1424,7 +1781,7 @@ $("#content").addEventListener("click", async (event) => {
       body: JSON.stringify({ status: terminalOption("tasks.status", "Concluída") })
     });
     showToast("Tarefa concluída.");
-    return renderTasks();
+    return state.view === "day" ? renderDay() : renderTasks();
   }
   if (event.target.closest("[data-retry]")) return navigate(state.view);
 });

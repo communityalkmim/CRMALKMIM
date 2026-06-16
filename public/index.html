@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260615-lead-values" />
+    <link rel="stylesheet" href="/styles.css?v=20260616-improvements" />
   </head>
   <body>
     <section id="login-screen" class="login-screen">
@@ -93,6 +93,10 @@
             <h1 id="page-title">Painel</h1>
           </div>
           <div class="topbar-actions">
+            <div class="global-search search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <input id="global-search" placeholder="Buscar cliente rápido" />
+            </div>
             <div class="today-chip" id="today-chip"></div>
             <button id="primary-action" class="button button-primary"></button>
           </div>
@@ -117,7 +121,7 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/env.js?v=20260615-lead-values"></script>
-    <script type="module" src="/app.js?v=20260615-lead-values"></script>
+    <script src="/env.js?v=20260616-improvements"></script>
+    <script type="module" src="/app.js?v=20260616-improvements"></script>
   </body>
 </html>
