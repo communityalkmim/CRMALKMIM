@@ -16,7 +16,8 @@ Em **Project Settings → API Keys**, copie:
 - Project URL
 - Publishable key ou `anon public`
 
-Nunca use a chave `service_role` no navegador.
+Nunca use a chave `service_role` no navegador. O CRM acessa o Supabase pelo
+servidor (`/api/...`), e os tokens de login ficam em cookies `HttpOnly`.
 
 Se o CRM já estava funcionando antes da inclusão dos planos, execute o arquivo
 `supabase/ATUALIZAR-BANCO.sql`. Ele adiciona os novos campos, corrige o acesso das
@@ -27,12 +28,17 @@ o **status financeiro** em pagamentos.
 
 ## Variáveis
 
-Crie um arquivo `.env` para desenvolvimento local:
+Crie um arquivo `.env` somente para desenvolvimento local. Esse arquivo real
+fica no seu computador e **não deve ser enviado para o GitHub**.
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://SEU-PROJETO.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=SUA_CHAVE_PUBLICA
+SUPABASE_URL=https://SEU-PROJETO.supabase.co
+SUPABASE_PUBLISHABLE_KEY=SUA_CHAVE_PUBLICA
 ```
+
+No GitHub deve ir apenas o arquivo `.env.example`, sem valores preenchidos.
+Nenhuma variável sensível deve usar prefixo público, porque esse tipo de prefixo
+envia o valor para o navegador em projetos front-end.
 
 ## Rodar localmente
 
@@ -58,18 +64,36 @@ Publish directory: dist
 Em **Project configuration → Environment variables**, cadastre:
 
 ```text
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
 ```
 
-Disponibilize as duas variáveis para **Builds** em todos os contextos. Depois use
-**Deploys → Trigger deploy → Clear cache and deploy site**.
+Disponibilize as duas variáveis para **Functions** e **Builds** em todos os
+contextos. Depois use **Deploys → Trigger deploy → Clear cache and deploy site**.
 
 O log da publicação deve mostrar:
 
 ```text
-Supabase configurado: true
+API server-side habilitada: true
 ```
+
+## Publicar na Vercel
+
+Em **Project Settings → Environment Variables**, cadastre:
+
+```text
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+```
+
+Use:
+
+```text
+Build command: npm run build
+Output directory: dist
+```
+
+As variáveis devem ficar direto na Vercel, nunca escritas no código.
 
 ## Tabelas
 
@@ -127,3 +151,14 @@ O CRM inclui:
 - status financeiro em **Pagamentos**;
 - tela **Relatórios** com resumo mensal e exportação;
 - tela **Backup** para exportar os principais dados em Excel.
+
+## Segurança
+
+- O navegador não recebe `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` nem qualquer
+  token do Supabase via JavaScript.
+- O login cria cookies `HttpOnly`, `Secure` em produção e `SameSite=Strict`.
+- O app não usa `localStorage` para dados de cliente ou credenciais.
+- O `sessionStorage` é limpo quando a aba/página é fechada.
+- Respostas de `/api/*` usam `Cache-Control: no-store`.
+- `.env`, `.env.*`, `data/`, `dist/`, `.netlify/` e `.vercel/` ficam ignorados
+  pelo Git.
