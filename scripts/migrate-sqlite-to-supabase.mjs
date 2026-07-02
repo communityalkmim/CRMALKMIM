@@ -22,13 +22,13 @@ function loadDotEnv() {
 
 const localEnv = loadDotEnv();
 const readEnv = (name) => process.env[name] || localEnv[name] || "";
-const url = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+const url = readEnv("SUPABASE_URL");
 const serviceKey = readEnv("SUPABASE_SERVICE_ROLE_KEY");
 const userId = readEnv("SUPABASE_USER_ID");
 
 if (!url || !serviceKey || !userId) {
   throw new Error(
-    "Defina NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY e SUPABASE_USER_ID antes da migração."
+    "Defina SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY e SUPABASE_USER_ID antes da migração."
   );
 }
 if (!existsSync(databasePath)) throw new Error("Banco SQLite não encontrado.");
