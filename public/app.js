@@ -1,9 +1,9 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260702-payment-status";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260702-secure-api";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
-const hasMissingProductionConfig = !isLocalHost && !isSupabaseConfigured;
+const hasMissingProductionConfig = false;
 
 const state = {
   user: null,
@@ -179,6 +179,8 @@ async function api(path, options = {}) {
   }
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    credentials: "same-origin",
+    cache: "no-store",
     ...options
   });
   let data = {};
@@ -1839,17 +1841,20 @@ $("#today-chip").textContent = new Intl.DateTimeFormat("pt-BR", {
   weekday: "long", day: "2-digit", month: "long"
 }).format(new Date());
 
-if (isSupabaseConfigured) {
-  $("#login-label").textContent = "E-mail";
-  const usernameInput = $('#login-form input[name="username"]');
-  usernameInput.type = "email";
-  usernameInput.autocomplete = "email";
-  usernameInput.placeholder = "Digite o e-mail de usuário";
-  $("#login-help").textContent = "";
-} else if (hasMissingProductionConfig) {
+$("#login-label").textContent = "E-mail";
+const usernameInput = $('#login-form input[name="username"]');
+usernameInput.type = "email";
+usernameInput.autocomplete = "email";
+usernameInput.placeholder = "Digite o e-mail de usuário";
+$("#login-help").textContent = "";
+
+window.addEventListener("pagehide", () => {
+  try { sessionStorage.clear(); } catch {}
+});
+
+if (hasMissingProductionConfig) {
   $("#login-error").textContent = "O Supabase não foi configurado neste deploy.";
-  $("#login-help").innerHTML =
-    "Cadastre <strong>NEXT_PUBLIC_SUPABASE_URL</strong> e <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong> na Netlify e faça um novo deploy.";
+  $("#login-help").textContent = "Configure as variáveis do Supabase no provedor.";
 }
 
 if (hasMissingProductionConfig) {
