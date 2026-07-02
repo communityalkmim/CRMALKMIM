@@ -29,20 +29,7 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await cp(source, output, { recursive: true });
 
-const publicEnv = {
-  NEXT_PUBLIC_SUPABASE_URL: readEnv("NEXT_PUBLIC_SUPABASE_URL"),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-};
-
-const missingPublicEnv = Object.entries(publicEnv)
-  .filter(([, value]) => !value)
-  .map(([name]) => name);
-
-if (process.env.NETLIFY === "true" && missingPublicEnv.length) {
-  throw new Error(
-    `Deploy cancelado: cadastre estas variáveis na Netlify antes de publicar: ${missingPublicEnv.join(", ")}`
-  );
-}
+const publicEnv = { SERVER_API_ENABLED: true };
 
 await writeFile(
   join(output, "env.js"),
@@ -51,4 +38,4 @@ await writeFile(
 );
 
 console.log(`Build criado em ${output}`);
-console.log(`Supabase configurado: ${Boolean(publicEnv.NEXT_PUBLIC_SUPABASE_URL && publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY)}`);
+console.log(`API server-side habilitada: ${Boolean(publicEnv.SERVER_API_ENABLED)}`);
