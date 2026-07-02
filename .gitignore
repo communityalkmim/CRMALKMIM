@@ -1,5 +1,9 @@
 .env
+.env.*
+!.env.example
 dist/
+dist-netlify-upload.zip
 node_modules/
 data/
 .netlify/
+.vercel/
