@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260616-improvements";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260702-payment-status";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -783,6 +783,18 @@ function paymentTotal(lead) {
   return Number(lead.commission || 0) + (lead.has_bonus ? Number(lead.bonus_value || 0) : 0);
 }
 
+function paymentStatus(lead) {
+  return lead.payment_status || "A receber";
+}
+
+function isPaymentReceived(lead) {
+  return paymentStatus(lead).toLowerCase() === "recebido";
+}
+
+function isPaymentReceivable(lead) {
+  return paymentStatus(lead).toLowerCase() === "a receber";
+}
+
 function paymentDate(lead) {
   return lead.contact_date || lead.entry_date || "";
 }
@@ -861,16 +873,39 @@ async function renderPayments() {
     $("#payment-search").placeholder = labels[$("#payment-search-field").value];
   });
   $("#export-payments").addEventListener("click", () => exportPaymentsXls(state.collections.filteredPayments || []));
+  $("#payments-table").addEventListener("change", async (event) => {
+    const toggle = event.target.closest("[data-payment-status-toggle]");
+    if (!toggle) return;
+    const lead = state.collections.payments.find((item) => sameId(item.id, toggle.dataset.paymentStatusToggle));
+    if (!lead) return showToast("Pagamento não encontrado.", "error");
+    const previous = paymentStatus(lead);
+    const next = toggle.checked ? "Recebido" : "A receber";
+    lead.payment_status = next;
+    state.leads = state.leads.map((item) => sameId(item.id, lead.id) ? { ...item, payment_status: next } : item);
+    try {
+      await api(`/api/leads/${lead.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ payment_status: next })
+      });
+      showToast(`Status financeiro alterado para ${next}.`);
+      applyFilters();
+    } catch (error) {
+      lead.payment_status = previous;
+      toggle.checked = previous.toLowerCase() === "recebido";
+      showToast(error.message, "error");
+      applyFilters();
+    }
+  });
   applyFilters();
 }
 
 function renderPaymentsSummary(items) {
-  const commission = items.reduce((sum, item) => sum + Number(item.commission || 0), 0);
-  const bonuses = items.reduce((sum, item) => sum + (item.has_bonus ? Number(item.bonus_value || 0) : 0), 0);
+  const receivable = items.filter(isPaymentReceivable).reduce((sum, item) => sum + paymentTotal(item), 0);
+  const received = items.filter(isPaymentReceived).reduce((sum, item) => sum + paymentTotal(item), 0);
   $("#payments-summary").innerHTML = `
-    ${statCard("Total de comissões", currency(commission), `${items.length} pagamento(s) filtrado(s)`, "money", "#d9eee8")}
-    ${statCard("Total de premiações", currency(bonuses), "Valores adicionais", "check", "#fff0d8")}
-    ${statCard("Total geral", currency(commission + bonuses), "Comissões + premiações", "dashboard", "#e2f1c4")}
+    ${statCard("A receber", currency(receivable), "Pagamentos ainda abertos", "money", "#fff0d8")}
+    ${statCard("Recebido", currency(received), "Pagamentos marcados como recebidos", "check", "#d9eee8")}
+    ${statCard("Total geral", currency(receivable + received), "A receber + recebido", "dashboard", "#e2f1c4")}
   `;
 }
 
@@ -883,7 +918,13 @@ function renderPaymentsTable(items) {
       <td><strong>${escapeHtml(lead.name)}</strong><br><span class="muted">${escapeHtml(lead.phone || "")}</span></td>
       <td>${escapeHtml(lead.plan_name || "-")}</td>
       <td>${formatDate(lead.effective_date)}</td>
-      <td>${badge(lead.payment_status || "A receber")}</td>
+      <td>
+        <label class="payment-status-toggle">
+          <input type="checkbox" data-payment-status-toggle="${lead.id}" ${isPaymentReceived(lead) ? "checked" : ""} />
+          <span class="toggle-track"></span>
+          <strong>${escapeHtml(paymentStatus(lead))}</strong>
+        </label>
+      </td>
       <td>${currency(lead.plan_value)}</td>
       <td>${Number(lead.commission_percent || 0)}%</td>
       <td><strong>${currency(lead.commission)}</strong></td>
