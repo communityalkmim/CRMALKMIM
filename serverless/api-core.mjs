@@ -59,15 +59,14 @@ function parseCookies(header = "") {
 }
 
 function cookie(name, value, maxAge) {
-  const secure = process.env.NODE_ENV === "production" || process.env.NETLIFY === "true" || process.env.VERCEL === "1";
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
     "Path=/",
     "HttpOnly",
+    "Secure",
     "SameSite=Strict",
     `Max-Age=${maxAge}`
   ];
-  if (secure) parts.push("Secure");
   return parts.join("; ");
 }
 
