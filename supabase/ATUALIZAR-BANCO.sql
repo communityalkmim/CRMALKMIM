@@ -57,8 +57,7 @@ grant select, insert, update, delete on table
   public.option_values
 to authenticated;
 
--- Todos os usuarios cadastrados em Authentication > Users fazem parte
--- da mesma equipe e acessam a mesma base do CRM.
+-- Cada usuario autenticado acessa somente registros vinculados ao proprio user_id.
 do $$
 declare
   table_name text;
@@ -71,7 +70,7 @@ begin
     execute format('drop policy if exists "owner_all" on public.%I', table_name);
     execute format('drop policy if exists "team_all" on public.%I', table_name);
     execute format(
-      'create policy "team_all" on public.%I for all to authenticated using (true) with check (true)',
+      'create policy "owner_all" on public.%I for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)',
       table_name
     );
   end loop;

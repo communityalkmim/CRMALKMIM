@@ -16,7 +16,8 @@ const state = {
   selectedDate: new Date().toISOString().slice(0, 10),
   settingsSection: "leads",
   quickFilters: {},
-  globalLeadSearch: ""
+  globalLeadSearch: "",
+  csrfToken: ""
 };
 
 const icons = {
@@ -169,19 +170,26 @@ function priority(value = "Média") {
 }
 
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && path !== "/api/login" && state.csrfToken) {
+    headers["X-CSRF-Token"] = state.csrfToken;
+  }
   if (isSupabaseConfigured) {
     try {
-      return await supabaseApi(path, options);
+      const data = await supabaseApi(path, { ...options, headers });
+      if (data?.csrfToken) state.csrfToken = data.csrfToken;
+      return data;
     } catch (error) {
       if (path !== "/api/login" && /sessão|session|jwt/i.test(error.message)) showLogin();
       throw error;
     }
   }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+    headers,
     credentials: "same-origin",
-    cache: "no-store",
-    ...options
+    cache: "no-store"
   });
   let data = {};
   try {
@@ -197,6 +205,7 @@ async function api(path, options = {}) {
     error.actionUrl = data.actionUrl || "";
     throw error;
   }
+  if (data?.csrfToken) state.csrfToken = data.csrfToken;
   return data;
 }
 
@@ -386,8 +395,8 @@ async function renderDashboard() {
 
 function statCard(label, value, note, iconName, color, attrs = "") {
   return `<article class="stat-card ${attrs ? "clickable-card" : ""}" style="--stat-color:${color}" ${attrs}>
-    <div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(iconName)}</span></div>
-    <strong>${value}</strong><small>${note}</small>
+    <div class="stat-top"><span>${escapeHtml(label)}</span><span class="stat-icon">${icon(iconName)}</span></div>
+    <strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small>
   </article>`;
 }
 
@@ -569,7 +578,7 @@ function renderLeadsTable(leads) {
   return `<div class="table-wrap"><table class="data-table">
     <thead><tr><th>Lead</th><th>Contato</th><th>Origem</th><th>Data contato</th><th>Vigência</th><th>Plano</th><th>Status</th><th>Comissão</th><th></th></tr></thead>
     <tbody>${leads.map((lead) => `<tr>
-      <td><div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.email || "E-mail não informado")}</span></div></div></td>
+      <td><div class="lead-cell"><span class="lead-avatar">${escapeHtml(initials(lead.name))}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.email || "E-mail não informado")}</span></div></div></td>
       <td>${escapeHtml(lead.phone || "-")}</td>
       <td>${escapeHtml(lead.origin || "-")}</td>
       <td>${formatDate(lead.contact_date)}</td>
@@ -611,7 +620,7 @@ async function renderKanban() {
           </header>
           <div class="kanban-cards">
             ${cards.length ? cards.map((lead) => `<article class="kanban-card" draggable="true" data-lead-id="${lead.id}">
-              <div class="lead-cell"><span class="lead-avatar">${initials(lead.name)}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.origin || "Origem não informada")}</span></div></div>
+              <div class="lead-cell"><span class="lead-avatar">${escapeHtml(initials(lead.name))}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.origin || "Origem não informada")}</span></div></div>
               <div class="kanban-contact">${icon("phone")} ${escapeHtml(lead.phone || "Sem telefone")}</div>
               ${lead.plan_name ? `<div class="kanban-plan">${escapeHtml(lead.plan_name)} · ${Number(lead.commission_percent || 0)}%</div>` : ""}
               <footer>
@@ -1130,7 +1139,7 @@ async function renderFollowup(preselectedLead = null) {
       <div class="panel">
         <div class="panel-header"><div><h3>Histórico de follow-ups</h3><p>Mensagens criadas e contatos realizados</p></div></div>
         ${history.length ? `<div class="card-list">${history.map((item) => `<article class="history-item">
-          <div class="card-top"><div class="lead-cell"><span class="lead-avatar">${initials(item.lead_name)}</span><div><strong>${escapeHtml(item.lead_name)}</strong><span>${escapeHtml(item.channel)}</span></div></div>${badge(item.status)}</div>
+          <div class="card-top"><div class="lead-cell"><span class="lead-avatar">${escapeHtml(initials(item.lead_name))}</span><div><strong>${escapeHtml(item.lead_name)}</strong><span>${escapeHtml(item.channel)}</span></div></div>${badge(item.status)}</div>
           <p class="history-message">${escapeHtml(item.message)}</p>
           <div class="history-meta"><span>${formatDateTime(item.created_at)}</span><div class="actions"><button class="icon-button" data-history-whatsapp="${item.id}" title="Abrir no WhatsApp">${icon("phone")}</button><button class="icon-button" data-delete="followups" data-id="${item.id}">${icon("trash")}</button></div></div>
         </article>`).join("")}</div>` : emptyState("Histórico vazio", "Crie e salve uma mensagem para começar o acompanhamento.", null, "message")}
@@ -1631,6 +1640,7 @@ async function openLeadHistory(id) {
 
 function showLogin() {
   state.user = null;
+  state.csrfToken = "";
   $("#app").hidden = true;
   $("#login-screen").hidden = false;
 }

@@ -1,3 +1,5 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
+
 const optionDefaults = {
   "leads.origin": ["Indicação", "Instagram", "Facebook", "Google", "WhatsApp", "Site", "Outro"],
   "leads.status": ["Novo", "Em contato", "Proposta", "Negociação", "Fechado", "Perdido"],
@@ -26,8 +28,16 @@ const entityConfig = {
 
 const ACCESS_COOKIE = "__Host-crm_access";
 const REFRESH_COOKIE = "__Host-crm_refresh";
+const CSRF_COOKIE = "__Host-crm_csrf";
 const ACCESS_MAX_AGE = 60 * 55;
 const REFRESH_MAX_AGE = 60 * 60 * 24 * 30;
+const CSRF_MAX_AGE = REFRESH_MAX_AGE;
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const optionGroups = new Set(Object.keys(optionDefaults));
 
 function env(name) {
   return process.env[name] || "";
@@ -70,17 +80,27 @@ function cookie(name, value, maxAge) {
   return parts.join("; ");
 }
 
-function authCookies(session) {
+function csrfToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+function csrfCookie(token) {
+  return cookie(CSRF_COOKIE, token, CSRF_MAX_AGE);
+}
+
+function authCookies(session, csrf = csrfToken()) {
   return [
     cookie(ACCESS_COOKIE, session.access_token, ACCESS_MAX_AGE),
-    cookie(REFRESH_COOKIE, session.refresh_token, REFRESH_MAX_AGE)
+    cookie(REFRESH_COOKIE, session.refresh_token, REFRESH_MAX_AGE),
+    csrfCookie(csrf)
   ];
 }
 
 function clearCookies() {
   return [
     cookie(ACCESS_COOKIE, "", 0),
-    cookie(REFRESH_COOKIE, "", 0)
+    cookie(REFRESH_COOKIE, "", 0),
+    cookie(CSRF_COOKIE, "", 0)
   ];
 }
 
@@ -191,26 +211,217 @@ async function readSession(cookieHeader) {
   const cookies = parseCookies(cookieHeader);
   let accessToken = cookies[ACCESS_COOKIE];
   const refreshToken = cookies[REFRESH_COOKIE];
+  const csrf = cookies[CSRF_COOKIE] || csrfToken();
   const setCookies = [];
+  if (!cookies[CSRF_COOKIE]) setCookies.push(csrfCookie(csrf));
   if (!accessToken && !refreshToken) throw new Error("Sessão expirada. Entre novamente.");
 
   try {
     const user = await getUserByToken(accessToken);
-    return { accessToken, refreshToken, user, setCookies };
+    return { accessToken, refreshToken, csrfToken: csrf, user, setCookies };
   } catch (error) {
     if (!refreshToken) throw error;
   }
 
   const refreshed = await authRequest("/auth/v1/token?grant_type=refresh_token", { refresh_token: refreshToken });
   accessToken = refreshed.access_token;
-  setCookies.push(...authCookies(refreshed));
+  setCookies.push(...authCookies(refreshed, csrf));
   const user = await getUserByToken(accessToken);
-  return { accessToken, refreshToken: refreshed.refresh_token, user, setCookies };
+  return { accessToken, refreshToken: refreshed.refresh_token, csrfToken: csrf, user, setCookies };
 }
 
 function parseBody(rawBody) {
   if (!rawBody) return {};
   return typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
+}
+
+function httpError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function headerValue(headers, name) {
+  const expected = name.toLowerCase();
+  const found = Object.entries(headers || {}).find(([key]) => key.toLowerCase() === expected);
+  return found?.[1] || "";
+}
+
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""));
+  const rightBuffer = Buffer.from(String(right || ""));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function verifyCsrf({ path, method, headers, cookies }) {
+  if (!MUTATING_METHODS.has(method) || path === "/api/login") return;
+  const sent = headerValue(headers, "x-csrf-token");
+  const stored = cookies[CSRF_COOKIE];
+  if (!sent || !stored || !safeEqual(sent, stored)) {
+    throw httpError("Token CSRF inválido. Atualize a página e tente novamente.", 403);
+  }
+}
+
+function cleanString(value, maxLength, field, { required = false } = {}) {
+  if (value === undefined || value === null) {
+    if (required) throw httpError(`O campo ${field} é obrigatório.`);
+    return null;
+  }
+  const text = String(value).replace(/\u0000/g, "").trim();
+  if (!text) {
+    if (required) throw httpError(`O campo ${field} é obrigatório.`);
+    return null;
+  }
+  if (text.length > maxLength) throw httpError(`O campo ${field} deve ter no máximo ${maxLength} caracteres.`);
+  return text;
+}
+
+function requiredText(value, field, maxLength = 120) {
+  return cleanString(value, maxLength, field, { required: true });
+}
+
+function optionalText(value, field, maxLength = 500) {
+  return cleanString(value, maxLength, field);
+}
+
+function optionalEmail(value) {
+  const email = optionalText(value, "email", 160);
+  if (email && !emailPattern.test(email)) throw httpError("Informe um e-mail válido.");
+  return email;
+}
+
+function uuid(value, field, { required = false } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (required) throw httpError(`O campo ${field} é obrigatório.`);
+    return null;
+  }
+  const id = String(value).trim();
+  if (!uuidPattern.test(id)) throw httpError(`O campo ${field} é inválido.`);
+  return id;
+}
+
+function dateValue(value, field, { required = false } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (required) throw httpError(`O campo ${field} é obrigatório.`);
+    return null;
+  }
+  const date = String(value).trim();
+  if (!datePattern.test(date) || Number.isNaN(new Date(`${date}T12:00:00Z`).getTime())) {
+    throw httpError(`O campo ${field} deve estar no formato AAAA-MM-DD.`);
+  }
+  return date;
+}
+
+function timeValue(value, field) {
+  if (value === undefined || value === null || value === "") return null;
+  const time = String(value).trim().slice(0, 5);
+  if (!timePattern.test(time)) throw httpError(`O campo ${field} deve estar no formato HH:MM.`);
+  return time;
+}
+
+function numberValue(value, field, { required = false, min = 0, max = 999999999 } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (required) throw httpError(`O campo ${field} é obrigatório.`);
+    return null;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) {
+    throw httpError(`O campo ${field} possui valor inválido.`);
+  }
+  return number;
+}
+
+function integerValue(value, field, options = {}) {
+  const number = numberValue(value, field, options);
+  return number === null ? null : Math.trunc(number);
+}
+
+function booleanValue(value) {
+  return value === true || value === "true" || value === "1" || value === 1;
+}
+
+const entitySchemas = {
+  plans: {
+    name: { required: true, validate: (value) => requiredText(value, "nome do plano", 120) },
+    commission_percent: { required: true, validate: (value) => numberValue(value, "percentual de comissão", { required: true, min: 0, max: 1000 }) }
+  },
+  leads: {
+    name: { required: true, validate: (value) => requiredText(value, "nome", 160) },
+    phone: { validate: (value) => optionalText(value, "telefone", 30) },
+    email: { validate: optionalEmail },
+    origin: { validate: (value) => optionalText(value, "origem", 80) },
+    entry_date: { required: true, validate: (value) => dateValue(value, "data de entrada", { required: true }) },
+    contact_date: { validate: (value) => dateValue(value, "data de contato") },
+    effective_date: { validate: (value) => dateValue(value, "data de vigência") },
+    plan_id: { validate: (value) => uuid(value, "plano") },
+    plan_value: { validate: (value) => numberValue(value, "valor do plano", { min: 0, max: 999999999 }) },
+    status: { required: true, validate: (value) => requiredText(value, "status", 80) },
+    has_bonus: { validate: booleanValue },
+    bonus_description: { validate: (value) => optionalText(value, "descrição da premiação", 200) },
+    bonus_value: { validate: (value) => numberValue(value, "valor da premiação", { min: 0, max: 999999999 }) },
+    payment_status: { validate: (value) => optionalText(value, "status financeiro", 80) || "A receber" },
+    notes: { validate: (value) => optionalText(value, "observações", 4000) }
+  },
+  appointments: {
+    title: { required: true, validate: (value) => requiredText(value, "título", 160) },
+    lead_id: { validate: (value) => uuid(value, "lead") },
+    date: { required: true, validate: (value) => dateValue(value, "data", { required: true }) },
+    time: { validate: (value) => timeValue(value, "horário") },
+    reminder: { validate: (value) => integerValue(value, "lembrete", { min: 0, max: 10080 }) },
+    completed: { validate: booleanValue },
+    notes: { validate: (value) => optionalText(value, "observações", 2000) }
+  },
+  pending: {
+    lead_id: { required: true, validate: (value) => uuid(value, "lead", { required: true }) },
+    type: { required: true, validate: (value) => requiredText(value, "tipo", 80) },
+    due_date: { validate: (value) => dateValue(value, "prazo") },
+    priority: { required: true, validate: (value) => requiredText(value, "prioridade", 40) },
+    status: { required: true, validate: (value) => requiredText(value, "status", 80) },
+    description: { validate: (value) => optionalText(value, "descrição", 4000) }
+  },
+  tasks: {
+    title: { required: true, validate: (value) => requiredText(value, "título", 160) },
+    type: { validate: (value) => optionalText(value, "tipo", 80) },
+    category: { validate: (value) => optionalText(value, "categoria", 80) },
+    lead_id: { validate: (value) => uuid(value, "cliente") },
+    date: { required: true, validate: (value) => dateValue(value, "data", { required: true }) },
+    time: { validate: (value) => timeValue(value, "horário") },
+    priority: { required: true, validate: (value) => requiredText(value, "prioridade", 40) },
+    status: { required: true, validate: (value) => requiredText(value, "status", 80) },
+    notes: { validate: (value) => optionalText(value, "observação", 3000) }
+  },
+  followups: {
+    lead_id: { required: true, validate: (value) => uuid(value, "lead", { required: true }) },
+    message: { required: true, validate: (value) => requiredText(value, "mensagem", 4000) },
+    channel: { validate: (value) => optionalText(value, "canal", 40) || "WhatsApp" },
+    status: { validate: (value) => optionalText(value, "status", 80) || "Rascunho" }
+  }
+};
+
+function validateEntityPayload(entity, body, { partial = false } = {}) {
+  const schema = entitySchemas[entity];
+  if (!schema) throw httpError("Entidade inválida.");
+  const payload = {};
+  for (const key of Object.keys(body || {})) {
+    if (!schema[key]) throw httpError(`Campo não permitido: ${key}.`);
+  }
+  for (const [field, config] of Object.entries(schema)) {
+    const hasValue = Object.prototype.hasOwnProperty.call(body || {}, field);
+    if (!hasValue) {
+      if (!partial && config.required) throw httpError(`O campo ${field} é obrigatório.`);
+      continue;
+    }
+    payload[field] = config.validate(body[field]);
+  }
+  if (partial && !Object.keys(payload).length) throw httpError("Nenhuma alteração informada.");
+  return payload;
+}
+
+function validateOptionGroup(module, field) {
+  const cleanModule = requiredText(module, "módulo", 40);
+  const cleanField = requiredText(field, "campo", 40);
+  if (!optionGroups.has(`${cleanModule}.${cleanField}`)) throw httpError("Grupo de opção inválido.");
+  return { module: cleanModule, field: cleanField };
 }
 
 function restValue(value) {
@@ -356,23 +567,23 @@ async function applyPlanRule(token, payload) {
 
 async function createEntity(entity, body, session) {
   const table = entityConfig[entity].table;
-  let payload = { ...body, user_id: session.user.id };
+  let payload = { ...validateEntityPayload(entity, body), user_id: session.user.id };
   if (entity === "leads") payload = await applyPlanRule(session.accessToken, payload);
-  if (entity === "appointments") payload.completed = Boolean(body.completed);
   const data = await restInsert(table, session.accessToken, payload);
   return { id: data.id };
 }
 
 async function updateEntity(entity, id, body, session) {
+  uuid(id, "id", { required: true });
   const table = entityConfig[entity].table;
-  let payload = { ...body };
+  let payload = validateEntityPayload(entity, body, { partial: true });
   if (entity === "leads") payload = await applyPlanRule(session.accessToken, payload);
-  if (entity === "appointments" && "completed" in payload) payload.completed = Boolean(payload.completed);
   if (["plans", "leads"].includes(entity)) payload.updated_at = new Date().toISOString();
   return restUpdate(table, session.accessToken, id, payload);
 }
 
 async function deleteEntity(entity, id, session) {
+  uuid(id, "id", { required: true });
   try {
     return await restDelete(entityConfig[entity].table, session.accessToken, id);
   } catch (error) {
@@ -397,19 +608,19 @@ async function listOptions(session) {
 }
 
 async function createOption(body, session) {
+  const { module, field } = validateOptionGroup(body.module, body.field);
   const existing = await restSelect("option_values", session.accessToken, {
     select: "sort_order",
-    filters: { module: body.module, field: body.field },
+    filters: { module, field },
     order: ["sort_order.desc"],
     limit: 1
   });
   const sort_order = existing?.[0] ? Number(existing[0].sort_order) + 1 : 0;
-  const value = String(body.value || "").trim();
-  if (!value) throw new Error("Informe o nome da opção.");
+  const value = requiredText(body.value, "opção", 80);
   const data = await restInsert("option_values", session.accessToken, {
     user_id: session.user.id,
-    module: body.module,
-    field: body.field,
+    module,
+    field,
     value,
     sort_order
   });
@@ -474,7 +685,7 @@ async function dashboardData(session) {
 async function route(path, method, body, session) {
   if (path === "/api/session" && method === "GET") {
     await ensureDefaultOptions(session.accessToken, session.user.id);
-    return { user: publicUser(session.user) };
+    return { user: publicUser(session.user), csrfToken: session.csrfToken };
   }
   if (path === "/api/dashboard" && method === "GET") return dashboardData(session);
   if (path === "/api/options" && method === "GET") return listOptions(session);
@@ -482,12 +693,14 @@ async function route(path, method, body, session) {
 
   const optionMatch = path.match(/^\/api\/options\/([^/]+)$/);
   if (optionMatch && method === "PUT") {
+    uuid(optionMatch[1], "id", { required: true });
     return rpc("rename_option_value", session.accessToken, {
       p_option_id: optionMatch[1],
-      p_new_value: String(body.value || "").trim()
+      p_new_value: requiredText(body.value, "opção", 80)
     });
   }
   if (optionMatch && method === "DELETE") {
+    uuid(optionMatch[1], "id", { required: true });
     return rpc("delete_option_value", session.accessToken, { p_option_id: optionMatch[1] });
   }
 
@@ -506,17 +719,21 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
     const normalizedPath = path.startsWith("/api") ? path : `/api${path.startsWith("/") ? path : `/${path}`}`;
     const normalizedMethod = String(method || "GET").toUpperCase();
     const payload = parseBody(body);
+    const cookies = parseCookies(headers.cookie || headers.Cookie || "");
 
     if (normalizedPath === "/api/login" && normalizedMethod === "POST") {
       const email = String(payload.username || "").trim();
       const password = payload.password || "";
+      if (!emailPattern.test(email) || !password) throw httpError("Informe e-mail e senha válidos.");
       const session = await authRequest("/auth/v1/token?grant_type=password", { email, password });
+      const csrf = csrfToken();
       await ensureDefaultOptions(session.access_token, session.user.id);
-      return json(200, { user: publicUser(session.user) }, authCookies(session));
+      return json(200, { user: publicUser(session.user), csrfToken: csrf }, authCookies(session, csrf));
     }
 
+    verifyCsrf({ path: normalizedPath, method: normalizedMethod, headers, cookies });
+
     if (normalizedPath === "/api/logout" && normalizedMethod === "POST") {
-      const cookies = parseCookies(headers.cookie || headers.Cookie || "");
       if (cookies[ACCESS_COOKIE]) {
         await authRequest("/auth/v1/logout", {}, cookies[ACCESS_COOKIE]).catch(() => null);
       }
@@ -527,7 +744,7 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
     const data = await route(normalizedPath, normalizedMethod, payload, session);
     return json(200, data, session.setCookies);
   } catch (error) {
-    const status = error?.status === 401 || /sessão|session|jwt/i.test(error?.message || "") ? 401 : 400;
+    const status = error?.status || (/sessão|session|jwt/i.test(error?.message || "") ? 401 : 400);
     const cookies = status === 401 ? clearCookies() : [];
     return json(status, apiError(error), cookies);
   }
