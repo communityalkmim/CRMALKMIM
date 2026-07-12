@@ -38,6 +38,10 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const optionGroups = new Set(Object.keys(optionDefaults));
+const loginAttempts = new Map();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const MAX_PAGE_LIMIT = 500;
 
 function env(name) {
   return process.env[name] || "";
@@ -235,6 +239,11 @@ function parseBody(rawBody) {
   return typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
 }
 
+function parsePath(rawPath = "/api") {
+  const url = new URL(rawPath, "https://crm.local");
+  return { pathname: url.pathname, searchParams: url.searchParams };
+}
+
 function httpError(message, status = 400) {
   const error = new Error(message);
   error.status = status;
@@ -260,6 +269,33 @@ function verifyCsrf({ path, method, headers, cookies }) {
   if (!sent || !stored || !safeEqual(sent, stored)) {
     throw httpError("Token CSRF inválido. Atualize a página e tente novamente.", 403);
   }
+}
+
+function clientIp(headers = {}) {
+  const forwarded = String(headerValue(headers, "x-forwarded-for") || "");
+  return forwarded.split(",")[0].trim()
+    || String(headerValue(headers, "x-real-ip") || "").trim()
+    || "unknown";
+}
+
+function rateLimitKey(headers, email) {
+  return `${clientIp(headers)}:${String(email || "").toLowerCase()}`;
+}
+
+export function checkLoginRateLimit({ key, now = Date.now() }) {
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  if (current.count >= LOGIN_MAX_ATTEMPTS) {
+    throw httpError("Muitas tentativas de login. Aguarde alguns minutos e tente novamente.", 429);
+  }
+  current.count += 1;
+}
+
+function clearLoginRateLimit(key) {
+  loginAttempts.delete(key);
 }
 
 function cleanString(value, maxLength, field, { required = false } = {}) {
@@ -398,7 +434,7 @@ const entitySchemas = {
   }
 };
 
-function validateEntityPayload(entity, body, { partial = false } = {}) {
+export function validateEntityPayload(entity, body, { partial = false } = {}) {
   const schema = entitySchemas[entity];
   if (!schema) throw httpError("Entidade inválida.");
   const payload = {};
@@ -428,14 +464,31 @@ function restValue(value) {
   return typeof value === "string" ? value.replace(/"/g, '\\"') : value;
 }
 
-async function restSelect(table, token, { select = "*", order = [], filters = {}, limit } = {}) {
+async function restSelect(table, token, { select = "*", order = [], filters = {}, limit, offset } = {}) {
   const query = { select };
   Object.entries(filters).forEach(([column, value]) => {
     query[column] = `eq.${restValue(value)}`;
   });
   if (order.length) query.order = order.join(",");
   if (limit) query.limit = limit;
+  if (offset !== undefined) query.offset = offset;
   return supabaseRequest(`/rest/v1/${table}`, { token, query });
+}
+
+function paginationFrom(searchParams = new URLSearchParams()) {
+  const rawLimit = Number(searchParams.get("limit") || 0);
+  const rawPage = Number(searchParams.get("page") || 0);
+  const rawOffset = Number(searchParams.get("offset") || 0);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(Math.trunc(rawLimit), MAX_PAGE_LIMIT)
+    : undefined;
+  if (!limit) return {};
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0
+    ? Math.trunc(rawOffset)
+    : Number.isFinite(rawPage) && rawPage > 1
+      ? (Math.trunc(rawPage) - 1) * limit
+      : 0;
+  return { limit, offset };
 }
 
 async function restInsert(table, token, payload, select = "id") {
@@ -492,7 +545,7 @@ async function ensureDefaultOptions(token, userId) {
   }
 }
 
-async function selectEntity(entity, token) {
+async function selectEntity(entity, token, { pagination = {} } = {}) {
   const table = entityConfig[entity].table;
   const relationSelect = {
     appointments: "*,leads(name)",
@@ -508,7 +561,7 @@ async function selectEntity(entity, token) {
     leads: ["created_at.desc"],
     followups: ["created_at.desc"]
   }[entity] || ["created_at.desc"];
-  const data = await restSelect(table, token, { select: relationSelect[entity] || "*", order });
+  const data = await restSelect(table, token, { select: relationSelect[entity] || "*", order, ...pagination });
   return (data || []).map((row) => {
     const lead = row.leads;
     const result = { ...row };
@@ -523,8 +576,7 @@ async function selectEntity(entity, token) {
   });
 }
 
-async function applyPlanRule(token, payload) {
-  if (!Object.prototype.hasOwnProperty.call(payload, "plan_id")) return payload;
+export function applyPlanRulePayload(payload, plan) {
   if (!payload.plan_id) {
     return {
       ...payload,
@@ -539,19 +591,13 @@ async function applyPlanRule(token, payload) {
       payment_status: "A receber"
     };
   }
-  const plans = await restSelect("plans", token, {
-    select: "id,name,commission_percent",
-    filters: { id: payload.plan_id },
-    limit: 1
-  });
-  const plan = plans?.[0];
-  if (!plan) throw new Error("Plano não encontrado.");
+  if (!plan) throw new Error("Plano nao encontrado.");
   const planValue = Number(payload.plan_value || 0);
   if (planValue <= 0) throw new Error("Informe o valor fechado do plano.");
   const commissionPercent = Number(plan.commission_percent || 0);
   const hasBonus = Boolean(payload.has_bonus);
   const bonusValue = hasBonus ? Number(payload.bonus_value || 0) : 0;
-  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiação.");
+  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiacao.");
   return {
     ...payload,
     plan_name: plan.name,
@@ -563,6 +609,18 @@ async function applyPlanRule(token, payload) {
     bonus_value: bonusValue,
     payment_status: payload.payment_status || "A receber"
   };
+}
+
+async function applyPlanRule(token, payload) {
+  if (!Object.prototype.hasOwnProperty.call(payload, "plan_id")) return payload;
+  if (!payload.plan_id) return applyPlanRulePayload(payload);
+  const plans = await restSelect("plans", token, {
+    select: "id,name,commission_percent",
+    filters: { id: payload.plan_id },
+    limit: 1
+  });
+  const plan = plans?.[0];
+  return applyPlanRulePayload(payload, plan);
 }
 
 async function createEntity(entity, body, session) {
@@ -682,7 +740,7 @@ async function dashboardData(session) {
   };
 }
 
-async function route(path, method, body, session) {
+async function route(path, method, body, session, searchParams = new URLSearchParams()) {
   if (path === "/api/session" && method === "GET") {
     await ensureDefaultOptions(session.accessToken, session.user.id);
     return { user: publicUser(session.user), csrfToken: session.csrfToken };
@@ -707,7 +765,7 @@ async function route(path, method, body, session) {
   const entityMatch = path.match(/^\/api\/(plans|leads|appointments|pending|tasks|followups)(?:\/([^/]+))?$/);
   if (!entityMatch) throw new Error("Rota não encontrada.");
   const [, entity, id] = entityMatch;
-  if (method === "GET" && !id) return selectEntity(entity, session.accessToken);
+  if (method === "GET" && !id) return selectEntity(entity, session.accessToken, { pagination: paginationFrom(searchParams) });
   if (method === "POST" && !id) return createEntity(entity, body, session);
   if (method === "PUT" && id) return updateEntity(entity, id, body, session);
   if (method === "DELETE" && id) return deleteEntity(entity, id, session);
@@ -716,7 +774,8 @@ async function route(path, method, body, session) {
 
 export async function handleApiRequest({ path, method, headers = {}, body }) {
   try {
-    const normalizedPath = path.startsWith("/api") ? path : `/api${path.startsWith("/") ? path : `/${path}`}`;
+    const parsed = parsePath(path);
+    const normalizedPath = parsed.pathname.startsWith("/api") ? parsed.pathname : `/api${parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`}`;
     const normalizedMethod = String(method || "GET").toUpperCase();
     const payload = parseBody(body);
     const cookies = parseCookies(headers.cookie || headers.Cookie || "");
@@ -725,7 +784,10 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
       const email = String(payload.username || "").trim();
       const password = payload.password || "";
       if (!emailPattern.test(email) || !password) throw httpError("Informe e-mail e senha válidos.");
+      const loginKey = rateLimitKey(headers, email);
+      checkLoginRateLimit({ key: loginKey });
       const session = await authRequest("/auth/v1/token?grant_type=password", { email, password });
+      clearLoginRateLimit(loginKey);
       const csrf = csrfToken();
       await ensureDefaultOptions(session.access_token, session.user.id);
       return json(200, { user: publicUser(session.user), csrfToken: csrf }, authCookies(session, csrf));
@@ -741,7 +803,7 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
     }
 
     const session = await readSession(headers.cookie || headers.Cookie || "");
-    const data = await route(normalizedPath, normalizedMethod, payload, session);
+    const data = await route(normalizedPath, normalizedMethod, payload, session, parsed.searchParams);
     return json(200, data, session.setCookies);
   } catch (error) {
     const status = error?.status || (/sessão|session|jwt/i.test(error?.message || "") ? 401 : 400);

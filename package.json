@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --no-warnings server.js",
     "build": "node scripts/build.mjs",
     "dev": "npx netlify-cli dev",
+    "start": "npm run dev",
+    "test": "node --test tests/*.test.mjs",
+    "ci": "npm test && npm run build",
+    "legacy:sqlite": "node --no-warnings legacy/server-sqlite.js",
     "migrate:supabase": "node --no-warnings scripts/migrate-sqlite-to-supabase.mjs"
   },
   "engines": {

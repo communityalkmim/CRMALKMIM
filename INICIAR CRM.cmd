@@ -2,18 +2,22 @@
 title Maikon CRM
 cd /d "%~dp0"
 
-set "NODE=C:\Users\maiko\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
-if not exist "%NODE%" set "NODE=node"
+where npm >nul 2>nul
+if errorlevel 1 (
+  echo Node.js/npm nao foi encontrado. Instale o Node.js 22 ou superior.
+  pause
+  exit /b 1
+)
 
 echo.
 echo  MAIKON CRM
 echo  ==========
-echo  O sistema sera aberto em instantes.
+echo  O CRM sera iniciado pelo fluxo oficial da Netlify.
 echo  Nao feche esta janela enquanto estiver usando o CRM.
 echo.
 
 start "" powershell.exe -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:4173'"
-"%NODE%" --no-warnings server.js
+npm run dev
 
 echo.
 echo O CRM foi encerrado.
