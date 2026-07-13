@@ -578,6 +578,9 @@ async function selectEntity(entity, token, { pagination = {} } = {}) {
 
 export function applyPlanRulePayload(payload, plan) {
   if (!payload.plan_id) {
+    if (Number(payload.plan_value || 0) > 0) {
+      throw httpError("Preencha o plano escolhido antes de salvar o lead.");
+    }
     return {
       ...payload,
       plan_id: null,
@@ -612,7 +615,12 @@ export function applyPlanRulePayload(payload, plan) {
 }
 
 async function applyPlanRule(token, payload) {
-  if (!Object.prototype.hasOwnProperty.call(payload, "plan_id")) return payload;
+  if (!Object.prototype.hasOwnProperty.call(payload, "plan_id")) {
+    if (Number(payload.plan_value || 0) > 0) {
+      throw httpError("Preencha o plano escolhido antes de salvar o lead.");
+    }
+    return payload;
+  }
   if (!payload.plan_id) return applyPlanRulePayload(payload);
   const plans = await restSelect("plans", token, {
     select: "id,name,commission_percent",

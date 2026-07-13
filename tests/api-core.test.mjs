@@ -28,14 +28,21 @@ test("applyPlanRulePayload calcula comissao e premiacao do lead", () => {
   assert.equal(result.payment_status, "A receber");
 });
 
-test("applyPlanRulePayload limpa dados financeiros quando o plano e removido", () => {
-  const result = applyPlanRulePayload({ plan_id: null, plan_value: 500, has_bonus: true, bonus_value: 100 });
+test("applyPlanRulePayload limpa dados financeiros quando o plano e removido sem valor", () => {
+  const result = applyPlanRulePayload({ plan_id: null, plan_value: 0, has_bonus: true, bonus_value: 100 });
 
   assert.equal(result.plan_name, null);
   assert.equal(result.plan_value, 0);
   assert.equal(result.commission, 0);
   assert.equal(result.has_bonus, false);
   assert.equal(result.bonus_value, 0);
+});
+
+test("applyPlanRulePayload bloqueia valor informado sem plano escolhido", () => {
+  assert.throws(
+    () => applyPlanRulePayload({ plan_id: null, plan_value: 500 }),
+    /plano escolhido/i
+  );
 });
 
 test("applyPlanRulePayload exige valor de premiacao quando flag esta ativa", () => {

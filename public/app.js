@@ -217,6 +217,26 @@ function showToast(message, type = "success") {
   showToast.timer = setTimeout(() => { toast.className = "toast"; }, 3200);
 }
 
+const LEAD_PLAN_REQUIRED_MESSAGE = "Preencha o plano escolhido antes de salvar o lead.";
+
+function validateLeadPlanSelection(form, { report = false } = {}) {
+  const planField = form?.elements?.plan_id;
+  const planValueField = form?.elements?.plan_value;
+  if (!planField || !planValueField) return true;
+
+  const planValue = Number(String(planValueField.value || 0).replace(",", "."));
+  const isPlanMissing = planValue > 0 && !planField.value;
+  planField.setCustomValidity(isPlanMissing ? LEAD_PLAN_REQUIRED_MESSAGE : "");
+
+  if (isPlanMissing && report) {
+    showToast(LEAD_PLAN_REQUIRED_MESSAGE, "error");
+    planField.focus();
+    planField.reportValidity();
+  }
+
+  return !isPlanMissing;
+}
+
 function loading() {
   $("#content").innerHTML = '<div class="loading"><div><div class="spinner"></div>Carregando informações...</div></div>';
 }
@@ -1435,13 +1455,19 @@ async function openEntityForm(entity, item = null) {
   document.body.style.overflow = "hidden";
   setTimeout(() => $("#entity-form input, #entity-form select")?.focus(), 20);
   if (entity === "leads") {
+    const form = $("#entity-form");
     ["plan_id", "plan_value", "has_bonus", "bonus_description", "bonus_value"].forEach((name) => {
-      $(`#entity-form [name="${name}"]`)?.addEventListener(name === "bonus_description" || name === "plan_value" || name === "bonus_value" ? "input" : "change", updateLeadPlanPreview);
+      form.elements[name]?.addEventListener(name === "bonus_description" || name === "plan_value" || name === "bonus_value" ? "input" : "change", updateLeadPlanPreview);
     });
+    form.elements.plan_value?.addEventListener("input", () => validateLeadPlanSelection(form));
+    form.elements.plan_value?.addEventListener("change", () => validateLeadPlanSelection(form, { report: true }));
+    form.elements.plan_id?.addEventListener("change", () => validateLeadPlanSelection(form));
+    validateLeadPlanSelection(form);
     updateLeadPlanPreview();
   }
   $("#entity-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (entity === "leads" && !validateLeadPlanSelection(event.currentTarget, { report: true })) return;
     const submit = event.submitter;
     submit.disabled = true;
     const data = Object.fromEntries(new FormData(event.currentTarget));
