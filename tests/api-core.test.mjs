@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   applyPlanRulePayload,
   checkLoginRateLimit,
-  validateEntityPayload
+  validateEntityPayload,
+  verifyJsonRequest,
+  verifySameOriginRequest
 } from "../serverless/api-core.mjs";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
@@ -94,4 +96,27 @@ test("checkLoginRateLimit bloqueia excesso de tentativas por chave", () => {
   }
   assert.throws(() => checkLoginRateLimit({ key, now: 1000 }), /tentativas/i);
   assert.doesNotThrow(() => checkLoginRateLimit({ key, now: 1000 + 15 * 60 * 1000 + 1 }));
+});
+
+test("verifySameOriginRequest bloqueia mutacao iniciada por outro site", () => {
+  assert.throws(
+    () => verifySameOriginRequest({ method: "POST", headers: { "sec-fetch-site": "cross-site" } }),
+    /outra origem/i
+  );
+  assert.doesNotThrow(() => verifySameOriginRequest({
+    method: "POST",
+    headers: { origin: "https://crm.example.com", host: "crm.example.com", "sec-fetch-site": "same-origin" }
+  }));
+});
+
+test("verifyJsonRequest exige JSON nas alteracoes", () => {
+  assert.throws(
+    () => verifyJsonRequest({ method: "POST", headers: { "content-type": "text/plain" } }),
+    /formato JSON/i
+  );
+  assert.doesNotThrow(() => verifyJsonRequest({
+    method: "PUT",
+    headers: { "content-type": "application/json; charset=utf-8" }
+  }));
+  assert.doesNotThrow(() => verifyJsonRequest({ method: "GET", headers: {} }));
 });

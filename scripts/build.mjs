@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -37,5 +38,15 @@ await writeFile(
   "utf8"
 );
 
+const assetFiles = ["app.js", "styles.css", "supabase-api.js", "env.js"];
+const assetContents = await Promise.all(assetFiles.map((name) => readFile(join(output, name), "utf8")));
+const buildVersion = createHash("sha256").update(assetContents.join("\n")).digest("hex").slice(0, 12);
+for (const name of ["index.html", "app.js"]) {
+  const file = join(output, name);
+  const content = await readFile(file, "utf8");
+  await writeFile(file, content.replaceAll("__BUILD_VERSION__", buildVersion), "utf8");
+}
+
 console.log(`Build criado em ${output}`);
 console.log(`API server-side habilitada: ${Boolean(publicEnv.SERVER_API_ENABLED)}`);
+console.log(`Versão dos arquivos: ${buildVersion}`);

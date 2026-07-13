@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=20260702-secure-api";
+import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=__BUILD_VERSION__";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -19,6 +19,8 @@ const state = {
   globalLeadSearch: "",
   csrfToken: ""
 };
+let navigationController = null;
+let activeNavigationSignal = null;
 
 const icons = {
   dashboard: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
@@ -169,15 +171,42 @@ function priority(value = "Média") {
   return `<span class="priority" style="--priority-color:${colors[value] || colors.Média}">${escapeHtml(value)}</span>`;
 }
 
+async function fetchWithTimeout(path, options, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else if (externalSignal) externalSignal.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await fetch(path, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw new Error("A conexão demorou para responder. Tente novamente.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", abortFromCaller);
+  }
+}
+
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const requestOptions = {
+    ...options,
+    headers,
+    signal: options.signal || (method === "GET" ? activeNavigationSignal : undefined)
+  };
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && path !== "/api/login" && state.csrfToken) {
     headers["X-CSRF-Token"] = state.csrfToken;
   }
   if (isSupabaseConfigured) {
     try {
-      const data = await supabaseApi(path, { ...options, headers });
+      const data = await supabaseApi(path, requestOptions);
       if (data?.csrfToken) state.csrfToken = data.csrfToken;
       return data;
     } catch (error) {
@@ -185,12 +214,16 @@ async function api(path, options = {}) {
       throw error;
     }
   }
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: "same-origin",
-    cache: "no-store"
-  });
+  let response;
+  for (let attempt = 0; attempt < (method === "GET" ? 2 : 1); attempt += 1) {
+    response = await fetchWithTimeout(path, {
+      ...requestOptions,
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    if (![502, 503, 504].includes(response.status) || attempt === 1) break;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
   let data = {};
   try {
     data = await response.json();
@@ -273,6 +306,10 @@ function updateHeader() {
 }
 
 async function navigate(view) {
+  navigationController?.abort();
+  const controller = new AbortController();
+  navigationController = controller;
+  activeNavigationSignal = controller.signal;
   state.view = view;
   renderNav();
   updateHeader();
@@ -293,9 +330,16 @@ async function navigate(view) {
       settings: renderSettings
     };
     await renderers[view]();
+    if (controller.signal.aborted || state.view !== view) return;
     $("#content").focus();
   } catch (error) {
+    if (controller.signal.aborted || error?.name === "AbortError") return;
     $("#content").innerHTML = `<div class="empty-state"><div><h3>Algo não saiu como esperado</h3><p>${escapeHtml(error.message)}</p><button class="button button-secondary" data-retry>Carregar novamente</button></div></div>`;
+  } finally {
+    if (navigationController === controller) {
+      navigationController = null;
+      activeNavigationSignal = null;
+    }
   }
 }
 
@@ -341,16 +385,10 @@ function emptyState(title, description, entity, iconName = "plus") {
 }
 
 async function renderDashboard() {
-  await ensureOptions();
-  const [data, leads, tasks, pending] = await Promise.all([
-    api("/api/dashboard"),
-    ensureLeads(true),
-    api("/api/tasks"),
-    api("/api/pending")
-  ]);
+  const data = await api("/api/dashboard");
   const maxFunnel = Math.max(...data.funnel.map((item) => Number(item.value)), 1);
   const colors = ["#245c54", "#6b9fed", "#eeb85d", "#74b7a8", "#e67979", "#9b7bd4"];
-  const alerts = dashboardAlerts(leads, tasks, pending);
+  const alerts = data.alerts || [];
   $("#content").innerHTML = `
     <div class="welcome-row">
       <div>
@@ -420,21 +458,6 @@ function statCard(label, value, note, iconName, color, attrs = "") {
   </article>`;
 }
 
-function dashboardAlerts(leads, tasks, pending) {
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrowDate = new Date(`${today}T12:00:00`);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrow = tomorrowDate.toISOString().slice(0, 10);
-  const finalTask = terminalOption("tasks.status", "Concluída");
-  const finalPending = terminalOption("pending.status", "Concluída");
-  return [
-    { label: "Tarefas vencidas", value: tasks.filter((item) => item.date < today && item.status !== finalTask).length, filter: "tasks-overdue" },
-    { label: "Tarefas de hoje", value: tasks.filter((item) => item.date === today && item.status !== finalTask).length, filter: "tasks-today" },
-    { label: "Pendências vencidas", value: pending.filter((item) => item.due_date && item.due_date < today && item.status !== finalPending).length, filter: "pending-overdue" },
-    { label: "Vigências até amanhã", value: leads.filter((item) => item.effective_date && item.effective_date >= today && item.effective_date <= tomorrow).length, filter: "lead-renewal" }
-  ];
-}
-
 function renderDashboardAlerts(alerts) {
   return `<section class="panel alerts-panel">
     <div class="panel-header"><div><h3>Alertas rápidos</h3><p>Itens que merecem atenção agora</p></div></div>
@@ -469,12 +492,13 @@ function emptyMini(text) {
 
 async function renderDay() {
   await ensureOptions();
-  const [appointments, tasks] = await Promise.all([api("/api/appointments"), api("/api/tasks")]);
+  const selected = state.selectedDate;
+  const query = `?date=${encodeURIComponent(selected)}`;
+  const [appointments, tasks] = await Promise.all([api(`/api/appointments${query}`), api(`/api/tasks${query}`)]);
   state.collections.appointments = appointments;
   state.collections.tasks = tasks;
-  const selected = state.selectedDate;
-  const selectedAppointments = appointments.filter((item) => item.date === selected).map((item) => ({ ...item, day_kind: "appointment" }));
-  const selectedTasks = tasks.filter((item) => item.date === selected).map((item) => ({ ...item, day_kind: "task" }));
+  const selectedAppointments = appointments.map((item) => ({ ...item, day_kind: "appointment" }));
+  const selectedTasks = tasks.map((item) => ({ ...item, day_kind: "task" }));
   const selectedItems = [...selectedAppointments, ...selectedTasks]
     .sort((left, right) => `${left.time || "99:99"}${left.title}`.localeCompare(`${right.time || "99:99"}${right.title}`));
   const openTasks = selectedTasks.filter((item) => item.status !== terminalOption("tasks.status", "Concluída")).length;
@@ -553,7 +577,7 @@ function renderDayTask(item) {
 }
 
 async function renderLeads() {
-  const [leads] = await Promise.all([ensureLeads(true), ensureOptions(), ensurePlans()]);
+  const [leads] = await Promise.all([ensureLeads(), ensureOptions(), ensurePlans()]);
   state.collections.leads = leads;
   $("#content").innerHTML = `
     ${databaseUpdateNotice()}
@@ -619,7 +643,7 @@ function renderLeadsTable(leads) {
 }
 
 async function renderKanban() {
-  const [leads] = await Promise.all([ensureLeads(true), ensureOptions()]);
+  const [leads] = await Promise.all([ensureLeads(), ensureOptions()]);
   state.collections.leads = leads;
   const columns = state.options["leads.status"] || [];
   $("#content").innerHTML = `
@@ -831,7 +855,7 @@ function paymentDate(lead) {
 }
 
 async function renderPayments() {
-  const [leads, plans] = await Promise.all([ensureLeads(true), ensurePlans(), ensureOptions()]);
+  const [leads, plans] = await Promise.all([ensureLeads(), ensurePlans(), ensureOptions()]);
   const payments = leads
     .filter((lead) => lead.plan_name || lead.plan_id)
     .sort((left, right) => paymentDate(right).localeCompare(paymentDate(left)));
@@ -966,7 +990,9 @@ function renderPaymentsTable(items) {
 }
 
 function excelEscape(value) {
-  return escapeHtml(value == null ? "" : value);
+  const text = String(value == null ? "" : value);
+  const safeValue = /^\s*[=+\-@]/.test(text) ? `'${text}` : text;
+  return escapeHtml(safeValue);
 }
 
 function exportPaymentsXls(items) {
@@ -1014,7 +1040,7 @@ function exportPaymentsXls(items) {
 }
 
 async function renderReports() {
-  const leads = await ensureLeads(true);
+  const leads = await ensureLeads();
   const months = [...new Set(leads.map((lead) => String(paymentDate(lead) || lead.entry_date || "").slice(0, 7)).filter(Boolean))]
     .sort((a, b) => b.localeCompare(a));
   const selected = state.reportMonth || months[0] || new Date().toISOString().slice(0, 7);
@@ -1622,7 +1648,7 @@ async function scheduleReturn(id) {
       date,
       time,
       priority: "Média",
-      status: terminalOption("tasks.status", "Pendente"),
+      status: optionValues("tasks.status")[0] || "Pendente",
       notes: "Retorno agendado pelo cadastro do lead."
     })
   });
@@ -1633,9 +1659,9 @@ async function openLeadHistory(id) {
   const lead = state.leads.find((item) => sameId(item.id, id));
   if (!lead) return showToast("Lead não encontrado.", "error");
   const [tasks, pending, followups] = await Promise.all([
-    api("/api/tasks"),
-    api("/api/pending"),
-    api("/api/followups")
+    api(`/api/tasks?lead_id=${encodeURIComponent(id)}`),
+    api(`/api/pending?lead_id=${encodeURIComponent(id)}`),
+    api(`/api/followups?lead_id=${encodeURIComponent(id)}`)
   ]);
   state.collections.tasks = tasks;
   state.collections.pending = pending;

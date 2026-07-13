@@ -129,6 +129,14 @@ create index if not exists appointments_user_date_idx on public.appointments(use
 create index if not exists pending_user_due_idx on public.pending_items(user_id, due_date);
 create index if not exists tasks_user_date_idx on public.tasks(user_id, date);
 create index if not exists options_user_group_idx on public.option_values(user_id, module, field, sort_order);
+create index if not exists appointments_lead_id_idx on public.appointments(lead_id);
+create index if not exists followups_lead_id_idx on public.followups(lead_id);
+create index if not exists followups_user_created_idx on public.followups(user_id, created_at desc);
+create index if not exists leads_plan_id_idx on public.leads(plan_id);
+create index if not exists leads_user_created_idx on public.leads(user_id, created_at desc);
+create index if not exists marketing_user_id_idx on public.marketing(user_id);
+create index if not exists pending_items_lead_id_idx on public.pending_items(lead_id);
+create index if not exists tasks_lead_id_idx on public.tasks(lead_id);
 
 alter table public.plans enable row level security;
 alter table public.leads enable row level security;
@@ -279,5 +287,14 @@ begin
 end;
 $$;
 
+revoke all on function public.rename_option_value(uuid, text) from public, anon;
+revoke all on function public.delete_option_value(uuid) from public, anon;
 grant execute on function public.rename_option_value(uuid, text) to authenticated;
 grant execute on function public.delete_option_value(uuid) to authenticated;
+
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke all on function public.rls_auto_enable() from public, anon, authenticated, service_role';
+  end if;
+end $$;

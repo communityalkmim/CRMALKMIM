@@ -202,8 +202,13 @@ O CRM inclui:
 - O login cria cookies `HttpOnly`, `Secure` em producao e `SameSite=Strict`.
 - `/api/login` aplica rate limit por IP/e-mail para reduzir tentativa de forca
   bruta.
+- Requisicoes que alteram dados exigem JSON, token CSRF e origem do proprio site.
+- As tabelas usam RLS por usuario e as funcoes administrativas nao ficam expostas
+  aos perfis `anon` ou `authenticated` sem necessidade.
 - O app nao usa `localStorage` para dados de cliente ou credenciais.
 - O `sessionStorage` e limpo quando a aba/pagina e fechada.
 - Respostas de `/api/*` usam `Cache-Control: no-store`.
+- No Supabase, ative `Authentication > Sign In / Providers > Password > Leaked
+  password protection` para bloquear senhas encontradas em vazamentos conhecidos.
 - `.env`, `.env.*`, `data/`, `dist/`, `.netlify/` e `.vercel/` ficam ignorados
   pelo Git.

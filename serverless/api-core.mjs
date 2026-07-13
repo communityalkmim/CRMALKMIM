@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 const optionDefaults = {
   "leads.origin": ["Indicação", "Instagram", "Facebook", "Google", "WhatsApp", "Site", "Outro"],
@@ -42,6 +42,10 @@ const loginAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const MAX_PAGE_LIMIT = 500;
+const UPSTREAM_TIMEOUT_MS = 12_000;
+const SESSION_CACHE_TTL_MS = 30_000;
+const SESSION_CACHE_MAX = 200;
+const userSessionCache = new Map();
 
 function env(name) {
   return process.env[name] || "";
@@ -113,6 +117,7 @@ function json(statusCode, payload, setCookies = []) {
     statusCode,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "no-store, no-cache, must-revalidate, private",
       "Pragma": "no-cache",
       "Expires": "0"
@@ -120,6 +125,46 @@ function json(statusCode, payload, setCookies = []) {
     setCookies,
     body: JSON.stringify(payload)
   };
+}
+
+function tokenCacheKey(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function pruneSessionCache(now = Date.now()) {
+  for (const [key, entry] of userSessionCache) {
+    if (entry.expiresAt <= now) userSessionCache.delete(key);
+  }
+  while (userSessionCache.size > SESSION_CACHE_MAX) {
+    userSessionCache.delete(userSessionCache.keys().next().value);
+  }
+}
+
+async function fetchUpstream(url, options = {}, { retries = 0 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (attempt < retries && [429, 502, 503, 504].includes(response.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries) {
+        if (error?.name === "AbortError") {
+          throw httpError("O serviço demorou para responder. Tente novamente.", 504);
+        }
+        throw httpError("Não foi possível conectar ao serviço de dados.", 503);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError;
 }
 
 function publicUser(user) {
@@ -159,13 +204,18 @@ async function supabaseRequest(path, { method = "GET", token = "", body, query, 
   };
   headers.Authorization = `Bearer ${token || key}`;
   if (prefer) headers.Prefer = prefer;
-  const response = await fetch(target, {
+  const response = await fetchUpstream(target, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body)
-  });
+  }, { retries: method === "GET" ? 1 : 0 });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    if (!response.ok) throw httpError("O serviço de dados retornou uma resposta inválida.", 502);
+  }
   if (!response.ok) {
     const error = new Error(data?.message || data?.error_description || data?.error || response.statusText);
     error.status = response.status;
@@ -179,7 +229,7 @@ async function authRequest(path, body, token = "") {
   const { url, key } = requireConfig();
   const headers = { "apikey": key, "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${url}${path}`, {
+  const response = await fetchUpstream(`${url}${path}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body || {})
@@ -195,19 +245,30 @@ async function authRequest(path, body, token = "") {
 }
 
 async function getUserByToken(token) {
+  if (typeof token !== "string" || token.split(".").length !== 3) {
+    throw httpError("Sessão expirada. Entre novamente.", 401);
+  }
+  const now = Date.now();
+  const cacheKey = tokenCacheKey(token);
+  const cached = userSessionCache.get(cacheKey);
+  if (cached?.expiresAt > now) return cached.user;
+  if (cached) userSessionCache.delete(cacheKey);
+
   const { url, key } = requireConfig();
-  const response = await fetch(`${url}/auth/v1/user`, {
+  const response = await fetchUpstream(`${url}/auth/v1/user`, {
     headers: {
       "apikey": key,
       "Authorization": `Bearer ${token}`
     }
-  });
+  }, { retries: 1 });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.msg || data.message || data.error || "Sessão expirada. Entre novamente.");
     error.status = response.status;
     throw error;
   }
+  userSessionCache.set(cacheKey, { user: data, expiresAt: now + SESSION_CACHE_TTL_MS });
+  pruneSessionCache(now);
   return data;
 }
 
@@ -220,11 +281,13 @@ async function readSession(cookieHeader) {
   if (!cookies[CSRF_COOKIE]) setCookies.push(csrfCookie(csrf));
   if (!accessToken && !refreshToken) throw new Error("Sessão expirada. Entre novamente.");
 
-  try {
-    const user = await getUserByToken(accessToken);
-    return { accessToken, refreshToken, csrfToken: csrf, user, setCookies };
-  } catch (error) {
-    if (!refreshToken) throw error;
+  if (accessToken) {
+    try {
+      const user = await getUserByToken(accessToken);
+      return { accessToken, refreshToken, csrfToken: csrf, user, setCookies };
+    } catch (error) {
+      if (!refreshToken) throw error;
+    }
   }
 
   const refreshed = await authRequest("/auth/v1/token?grant_type=refresh_token", { refresh_token: refreshToken });
@@ -268,6 +331,35 @@ function verifyCsrf({ path, method, headers, cookies }) {
   const stored = cookies[CSRF_COOKIE];
   if (!sent || !stored || !safeEqual(sent, stored)) {
     throw httpError("Token CSRF inválido. Atualize a página e tente novamente.", 403);
+  }
+}
+
+export function verifySameOriginRequest({ method, headers = {} }) {
+  if (!MUTATING_METHODS.has(method)) return;
+  const fetchSite = String(headerValue(headers, "sec-fetch-site") || "").toLowerCase();
+  if (fetchSite && !["same-origin", "none"].includes(fetchSite)) {
+    throw httpError("Requisição de outra origem bloqueada.", 403);
+  }
+
+  const origin = headerValue(headers, "origin");
+  const forwardedHost = String(headerValue(headers, "x-forwarded-host") || "").split(",")[0].trim();
+  const host = forwardedHost || headerValue(headers, "host");
+  if (origin && host) {
+    let originHost = "";
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      throw httpError("Origem da requisição inválida.", 403);
+    }
+    if (originHost !== host) throw httpError("Requisição de outra origem bloqueada.", 403);
+  }
+}
+
+export function verifyJsonRequest({ method, headers = {} }) {
+  if (!MUTATING_METHODS.has(method)) return;
+  const contentType = String(headerValue(headers, "content-type") || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw httpError("Envie os dados no formato JSON.", 415);
   }
 }
 
@@ -545,7 +637,7 @@ async function ensureDefaultOptions(token, userId) {
   }
 }
 
-async function selectEntity(entity, token, { pagination = {} } = {}) {
+async function selectEntity(entity, token, { pagination = {}, filters = {}, select } = {}) {
   const table = entityConfig[entity].table;
   const relationSelect = {
     appointments: "*,leads(name)",
@@ -561,7 +653,12 @@ async function selectEntity(entity, token, { pagination = {} } = {}) {
     leads: ["created_at.desc"],
     followups: ["created_at.desc"]
   }[entity] || ["created_at.desc"];
-  const data = await restSelect(table, token, { select: relationSelect[entity] || "*", order, ...pagination });
+  const data = await restSelect(table, token, {
+    select: select || relationSelect[entity] || "*",
+    order,
+    filters,
+    ...pagination
+  });
   return (data || []).map((row) => {
     const lead = row.leads;
     const result = { ...row };
@@ -661,7 +758,6 @@ async function deleteEntity(entity, id, session) {
 }
 
 async function listOptions(session) {
-  await ensureDefaultOptions(session.accessToken, session.user.id);
   const rows = await restSelect("option_values", session.accessToken, {
     select: "id,module,field,value,sort_order",
     order: ["module.asc", "field.asc", "sort_order.asc"]
@@ -671,6 +767,17 @@ async function listOptions(session) {
     (groups[key] ||= []).push(row);
     return groups;
   }, {});
+}
+
+function businessDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 async function createOption(body, session) {
@@ -705,13 +812,15 @@ async function rpc(name, token, body) {
 
 async function dashboardData(session) {
   const [leads, pending, tasks, appointments, options] = await Promise.all([
-    selectEntity("leads", session.accessToken),
-    selectEntity("pending", session.accessToken),
-    selectEntity("tasks", session.accessToken),
-    selectEntity("appointments", session.accessToken),
+    selectEntity("leads", session.accessToken, { select: "status,origin,effective_date,commission" }),
+    selectEntity("pending", session.accessToken, { select: "status,due_date" }),
+    selectEntity("tasks", session.accessToken, { select: "id,title,date,time,status,leads(name)" }),
+    selectEntity("appointments", session.accessToken, { select: "id,title,date,time,completed,leads(name)" }),
     listOptions(session)
   ]);
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = businessDate(now);
+  const tomorrow = businessDate(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   const leadStatuses = (options["leads.status"] || []).map((item) => item.value);
   const finalPending = (options["pending.status"] || []).at(-1)?.value || "Concluída";
   const finalTask = (options["tasks.status"] || []).at(-1)?.value || "Concluída";
@@ -744,8 +853,26 @@ async function dashboardData(session) {
     },
     funnel: countBy(leads, "status", "Não informado"),
     origins: countBy(leads, "origin", "Não informada").slice(0, 6),
-    agenda
+    agenda,
+    alerts: [
+      { label: "Tarefas vencidas", value: tasks.filter((item) => item.date < today && item.status !== finalTask).length, filter: "tasks-overdue" },
+      { label: "Tarefas de hoje", value: tasks.filter((item) => item.date === today && item.status !== finalTask).length, filter: "tasks-today" },
+      { label: "Pendências vencidas", value: pending.filter((item) => item.due_date && item.due_date < today && item.status !== finalPending).length, filter: "pending-overdue" },
+      { label: "Vigências até amanhã", value: leads.filter((item) => item.effective_date && item.effective_date >= today && item.effective_date <= tomorrow).length, filter: "lead-renewal" }
+    ]
   };
+}
+
+function entityFilters(entity, searchParams) {
+  const filters = {};
+  const relationEntities = new Set(["appointments", "pending", "tasks", "followups"]);
+  if (relationEntities.has(entity) && searchParams.has("lead_id")) {
+    filters.lead_id = uuid(searchParams.get("lead_id"), "lead", { required: true });
+  }
+  if (["appointments", "tasks"].includes(entity) && searchParams.has("date")) {
+    filters.date = dateValue(searchParams.get("date"), "data", { required: true });
+  }
+  return filters;
 }
 
 async function route(path, method, body, session, searchParams = new URLSearchParams()) {
@@ -771,13 +898,18 @@ async function route(path, method, body, session, searchParams = new URLSearchPa
   }
 
   const entityMatch = path.match(/^\/api\/(plans|leads|appointments|pending|tasks|followups)(?:\/([^/]+))?$/);
-  if (!entityMatch) throw new Error("Rota não encontrada.");
+  if (!entityMatch) throw httpError("Rota não encontrada.", 404);
   const [, entity, id] = entityMatch;
-  if (method === "GET" && !id) return selectEntity(entity, session.accessToken, { pagination: paginationFrom(searchParams) });
+  if (method === "GET" && !id) {
+    return selectEntity(entity, session.accessToken, {
+      pagination: paginationFrom(searchParams),
+      filters: entityFilters(entity, searchParams)
+    });
+  }
   if (method === "POST" && !id) return createEntity(entity, body, session);
   if (method === "PUT" && id) return updateEntity(entity, id, body, session);
   if (method === "DELETE" && id) return deleteEntity(entity, id, session);
-  throw new Error("Método não permitido.");
+  throw httpError("Método não permitido.", 405);
 }
 
 export async function handleApiRequest({ path, method, headers = {}, body }) {
@@ -785,6 +917,8 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
     const parsed = parsePath(path);
     const normalizedPath = parsed.pathname.startsWith("/api") ? parsed.pathname : `/api${parsed.pathname.startsWith("/") ? parsed.pathname : `/${parsed.pathname}`}`;
     const normalizedMethod = String(method || "GET").toUpperCase();
+    verifySameOriginRequest({ method: normalizedMethod, headers });
+    verifyJsonRequest({ method: normalizedMethod, headers });
     const payload = parseBody(body);
     const cookies = parseCookies(headers.cookie || headers.Cookie || "");
 
