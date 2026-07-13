@@ -811,12 +811,13 @@ async function rpc(name, token, body) {
 }
 
 async function dashboardData(session) {
-  const [leads, pending, tasks, appointments, options] = await Promise.all([
-    selectEntity("leads", session.accessToken, { select: "status,origin,effective_date,commission" }),
+  const [leads, pending, tasks, appointments, options, plans] = await Promise.all([
+    selectEntity("leads", session.accessToken),
     selectEntity("pending", session.accessToken, { select: "status,due_date" }),
     selectEntity("tasks", session.accessToken, { select: "id,title,date,time,status,leads(name)" }),
     selectEntity("appointments", session.accessToken, { select: "id,title,date,time,completed,leads(name)" }),
-    listOptions(session)
+    listOptions(session),
+    selectEntity("plans", session.accessToken)
   ]);
   const now = new Date();
   const today = businessDate(now);
@@ -854,6 +855,9 @@ async function dashboardData(session) {
     funnel: countBy(leads, "status", "Não informado"),
     origins: countBy(leads, "origin", "Não informada").slice(0, 6),
     agenda,
+    leads,
+    options,
+    plans,
     alerts: [
       { label: "Tarefas vencidas", value: tasks.filter((item) => item.date < today && item.status !== finalTask).length, filter: "tasks-overdue" },
       { label: "Tarefas de hoje", value: tasks.filter((item) => item.date === today && item.status !== finalTask).length, filter: "tasks-today" },

@@ -386,6 +386,9 @@ function emptyState(title, description, entity, iconName = "plus") {
 
 async function renderDashboard() {
   const data = await api("/api/dashboard");
+  state.leads = data.leads || [];
+  state.options = data.options || {};
+  state.plans = data.plans || [];
   const maxFunnel = Math.max(...data.funnel.map((item) => Number(item.value)), 1);
   const colors = ["#245c54", "#6b9fed", "#eeb85d", "#74b7a8", "#e67979", "#9b7bd4"];
   const alerts = data.alerts || [];
