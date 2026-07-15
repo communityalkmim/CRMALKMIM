@@ -38,7 +38,7 @@ await writeFile(
   "utf8"
 );
 
-const assetFiles = ["app.js", "styles.css", "supabase-api.js", "date-utils.js", "env.js"];
+const assetFiles = ["app.js", "styles.css", "supabase-api.js", "date-utils.js", "payment-utils.js", "env.js"];
 const assetContents = await Promise.all(assetFiles.map((name) => readFile(join(output, name), "utf8")));
 const buildVersion = createHash("sha256").update(assetContents.join("\n")).digest("hex").slice(0, 12);
 for (const name of ["index.html", "app.js"]) {

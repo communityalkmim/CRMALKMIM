@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=__BUILD_VERSION__";
 import { formatDate, formatDateTime } from "./date-utils.js?v=__BUILD_VERSION__";
+import { activePaymentTotal, groupPaymentsByLead } from "./payment-utils.js?v=__BUILD_VERSION__";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -622,7 +623,6 @@ function renderLeadsTable(leads) {
       <td>${badge(lead.status)}</td>
       <td><strong>${currency(lead.commission)}</strong>${lead.has_bonus ? `<br><span class="bonus-label">+ ${currency(lead.bonus_value)} · ${escapeHtml(lead.bonus_description || "Premiação")}</span>` : ""}</td>
       <td><div class="actions">
-        <button class="icon-button" data-convert-lead="${lead.id}" title="Converter em cliente">${icon("check")}</button>
         <button class="icon-button" data-schedule-return="${lead.id}" title="Agendar retorno">${icon("clock")}</button>
         <button class="icon-button" data-history-lead="${lead.id}" title="Histórico do lead">${icon("dashboard")}</button>
         <button class="icon-button" data-followup-lead="${lead.id}" title="Criar follow-up">${icon("message")}</button>
@@ -836,6 +836,7 @@ function paymentDate(lead) {
 async function renderPayments() {
   const [payments, plans] = await Promise.all([api("/api/payments"), ensurePlans()]);
   state.collections.payments = payments;
+  const paymentGroups = groupPaymentsByLead(payments);
   const planNames = [...new Set(plans.map((plan) => plan.name))].sort((a, b) => a.localeCompare(b));
   $("#content").innerHTML = `
     ${databaseUpdateNotice()}
@@ -886,27 +887,35 @@ async function renderPayments() {
     const paymentStatus = $("#payment-status-filter").value;
     const from = $("#payment-date-from").value;
     const to = $("#payment-date-to").value;
-    const filtered = payments.filter((payment) => {
+    const scopeMatch = (payment) => {
       const date = payment.due_date || "";
-      const reference = payment.kind === "bonus" ? "Premiação" : `Parcela ${payment.installment}`;
-      const values = {
-        client: payment.lead_name || "",
-        plan: payment.plan_name || "",
-        reference: `${reference} ${payment.description || ""}`
-      };
-      const haystack = field === "all"
-        ? `${values.client} ${values.plan} ${values.reference} ${payment.plan_segment || ""} ${date} ${formatDate(date)}`
-        : values[field] || "";
-      return (!term || haystack.toLowerCase().includes(term))
-        && (!segment || payment.plan_segment === segment)
-        && (!plan || payment.plan_name === plan)
+      return Number(payment.amount || 0) > 0
         && (!kind || payment.kind === kind)
         && (!paymentStatus || payment.status === paymentStatus)
         && (!from || date >= from)
         && (!to || date <= to);
+    };
+    const filtered = paymentGroups.filter((group) => {
+      const references = group.payments
+        .filter((payment) => Number(payment.amount || 0) > 0)
+        .map((payment) => payment.kind === "bonus" ? "Premiação" : `Parcela ${payment.installment}`)
+        .join(" ");
+      const values = {
+        client: group.lead_name || "",
+        plan: group.plan_name || "",
+        reference: `${references} ${group.bonus_description || ""}`
+      };
+      const haystack = field === "all"
+        ? `${values.client} ${values.plan} ${values.reference} ${group.plan_segment || ""} ${group.effective_date || ""}`
+        : values[field] || "";
+      return (!term || haystack.toLowerCase().includes(term))
+        && (!segment || group.plan_segment === segment)
+        && (!plan || group.plan_name === plan)
+        && group.payments.some(scopeMatch);
     });
-    state.collections.filteredPayments = filtered;
-    renderPaymentsSummary(filtered);
+    const summaryItems = filtered.flatMap((group) => group.payments.filter(scopeMatch));
+    state.collections.filteredPaymentGroups = filtered;
+    renderPaymentsSummary(summaryItems);
     $("#payments-table").innerHTML = renderPaymentsTable(filtered);
   };
 
@@ -921,14 +930,16 @@ async function renderPayments() {
     };
     $("#payment-search").placeholder = labels[$("#payment-search-field").value];
   });
-  $("#export-payments").addEventListener("click", () => exportPaymentsXls(state.collections.filteredPayments || []));
+  $("#export-payments").addEventListener("click", () => exportPaymentsXls(state.collections.filteredPaymentGroups || []));
   $("#payments-table").addEventListener("change", async (event) => {
     const toggle = event.target.closest("[data-payment-status-toggle]");
     if (!toggle) return;
     const payment = state.collections.payments.find((item) => sameId(item.id, toggle.dataset.paymentStatusToggle));
     if (!payment) return showToast("Pagamento não encontrado.", "error");
     const previous = payment.status;
+    const previousReceivedAt = payment.received_at;
     const next = toggle.checked ? "Recebido" : "A receber";
+    toggle.disabled = true;
     payment.status = next;
     payment.received_at = next === "Recebido" ? new Date().toISOString() : null;
     try {
@@ -942,6 +953,7 @@ async function renderPayments() {
       applyFilters();
     } catch (error) {
       payment.status = previous;
+      payment.received_at = previousReceivedAt;
       toggle.checked = previous === "Recebido";
       showToast(error.message, "error");
       applyFilters();
@@ -969,29 +981,37 @@ function renderPaymentsSummary(items) {
 function renderPaymentsTable(items) {
   if (!items.length) return emptyState("Nenhum pagamento encontrado", "Ajuste os filtros ou vincule um plano a um lead.", null, "money");
   return `<div class="table-wrap"><table class="data-table payment-table">
-    <thead><tr><th>Vencimento</th><th>Cliente</th><th>Segmento / plano</th><th>Referência</th><th>Base</th><th>Percentual</th><th>Valor</th><th>Confirmação</th><th>Recebido em</th></tr></thead>
-    <tbody>${items.map((payment) => {
-      const overdue = payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10);
-      const reference = payment.kind === "bonus" ? "Premiação" : `Comissão · parcela ${payment.installment}`;
+    <thead><tr><th>Cliente</th><th>Segmento / plano</th><th>Vigência</th><th>Valor do plano</th><th>Comissão 1</th><th>Comissão 2</th><th>Comissão 3</th><th>Premiação</th><th>Total</th></tr></thead>
+    <tbody>${items.map((group) => {
+      const overdue = group.payments.some((payment) => Number(payment.amount || 0) > 0 && payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10));
       return `<tr class="${overdue ? "payment-overdue-row" : ""}">
-      <td><strong>${formatDate(payment.due_date)}</strong>${overdue ? `<br><span class="overdue-label">Em atraso</span>` : ""}</td>
-      <td><strong>${escapeHtml(payment.lead_name || "-")}</strong><br><span class="muted">${escapeHtml(payment.lead_phone || "")}</span></td>
-      <td>${escapeHtml(payment.plan_segment || "-")}<br><span class="muted">${escapeHtml(payment.plan_name || "-")}</span></td>
-      <td><strong>${escapeHtml(reference)}</strong>${payment.description ? `<br><span class="muted">${escapeHtml(payment.description)}</span>` : ""}</td>
-      <td>${payment.kind === "commission" ? currency(payment.source_amount) : "-"}</td>
-      <td>${payment.kind === "commission" ? `${Number(payment.percent || 0)}%` : "-"}</td>
-      <td><strong class="payment-total">${currency(payment.amount)}</strong></td>
-      <td>
-        <label class="payment-status-toggle">
-          <input type="checkbox" data-payment-status-toggle="${payment.id}" ${payment.status === "Recebido" ? "checked" : ""} ${payment.status === "Cancelado" ? "disabled" : ""} />
-          <span class="toggle-track"></span>
-          <strong>${escapeHtml(payment.status)}</strong>
-        </label>
-      </td>
-      <td>${payment.received_at ? formatDate(payment.received_at) : "-"}</td>
+      <td><strong>${escapeHtml(group.lead_name || "-")}</strong><br><span class="muted">${escapeHtml(group.lead_phone || "")}</span></td>
+      <td>${escapeHtml(group.plan_segment || "-")}<br><span class="muted">${escapeHtml(group.plan_name || "-")}</span></td>
+      <td>${formatDate(group.effective_date)}</td>
+      <td>${currency(group.plan_value)}</td>
+      <td>${renderPaymentFlag(group.commissions[1], "Parcela 1")}</td>
+      <td>${renderPaymentFlag(group.commissions[2], "Parcela 2")}</td>
+      <td>${renderPaymentFlag(group.commissions[3], "Parcela 3")}</td>
+      <td>${renderPaymentFlag(group.bonus, group.bonus_description || "Premiação")}</td>
+      <td><strong class="payment-total">${currency(activePaymentTotal(group))}</strong></td>
     </tr>`;
     }).join("")}</tbody>
   </table></div>`;
+}
+
+function renderPaymentFlag(payment, label) {
+  if (!payment || Number(payment.amount || 0) <= 0) return '<span class="payment-not-applicable">Não cadastrada</span>';
+  const overdue = payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10);
+  return `<div class="payment-installment">
+    <strong>${currency(payment.amount)}</strong>
+    <span>${escapeHtml(label)}${payment.kind === "commission" ? ` · ${Number(payment.percent || 0)}%` : ""}</span>
+    <small>Vence ${formatDate(payment.due_date)}${overdue ? ' · <b>Em atraso</b>' : ""}</small>
+    <label class="payment-status-toggle payment-status-compact">
+      <input type="checkbox" data-payment-status-toggle="${payment.id}" ${payment.status === "Recebido" ? "checked" : ""} ${payment.status === "Cancelado" ? "disabled" : ""} />
+      <span class="toggle-track"></span>
+      <strong>${payment.status === "Recebido" ? "Pago" : escapeHtml(payment.status)}</strong>
+    </label>
+  </div>`;
 }
 
 function excelEscape(value) {
@@ -1002,20 +1022,27 @@ function excelEscape(value) {
 
 function exportPaymentsXls(items) {
   if (!items.length) return showToast("Não há pagamentos no filtro atual para exportar.", "error");
-  const commission = items.filter((item) => item.kind === "commission").reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const bonuses = items.filter((item) => item.kind === "bonus").reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const rows = items.map((payment) => `<tr>
+  const allPayments = items.flatMap((group) => group.payments).filter((payment) => Number(payment.amount || 0) > 0);
+  const commission = allPayments.filter((item) => item.kind === "commission").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const bonuses = allPayments.filter((item) => item.kind === "bonus").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const paymentCells = (payment) => payment && Number(payment.amount || 0) > 0 ? `
     <td class="date">${excelEscape(formatDate(payment.due_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
-    <td>${excelEscape(payment.lead_name || "")}</td>
-    <td>${excelEscape(payment.plan_segment || "")}</td>
-    <td>${excelEscape(payment.plan_name || "")}</td>
-    <td>${excelEscape(payment.kind === "bonus" ? "Premiação" : `Parcela ${payment.installment}`)}</td>
-    <td class="money">${Number(payment.source_amount || 0)}</td>
     <td class="percent">${Number(payment.percent || 0) / 100}</td>
     <td class="money">${Number(payment.amount || 0)}</td>
-    <td>${excelEscape(payment.status)}</td>
-    <td class="date">${excelEscape(payment.received_at ? formatDate(payment.received_at, { day: "2-digit", month: "2-digit", year: "numeric" }) : "")}</td>
-    <td>${excelEscape(payment.description || "")}</td>
+    <td>${excelEscape(payment.status)}</td>` : "<td></td><td></td><td></td><td>Não cadastrada</td>";
+  const rows = items.map((group) => `<tr>
+    <td>${excelEscape(group.lead_name || "")}</td>
+    <td>${excelEscape(group.plan_segment || "")}</td>
+    <td>${excelEscape(group.plan_name || "")}</td>
+    <td class="date">${excelEscape(formatDate(group.effective_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td class="money">${Number(group.plan_value || 0)}</td>
+    ${paymentCells(group.commissions[1])}
+    ${paymentCells(group.commissions[2])}
+    ${paymentCells(group.commissions[3])}
+    <td class="money">${Number(group.bonus?.amount || 0)}</td>
+    <td>${excelEscape(group.bonus?.status || "Não cadastrada")}</td>
+    <td>${excelEscape(group.bonus_description || "")}</td>
+    <td class="money">${activePaymentTotal(group)}</td>
   </tr>`).join("");
   const html = `<!doctype html><html><head><meta charset="UTF-8"><style>
     table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt}
@@ -1027,9 +1054,9 @@ function exportPaymentsXls(items) {
     .percent{mso-number-format:"0.00%"}
     .date{mso-number-format:"dd/mm/yyyy"}
   </style></head><body><table>
-    <tr><th class="title" colspan="11">Pagamentos e Premiações</th></tr>
-    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="2"></td></tr>
-    <tr><th>Vencimento</th><th>Cliente</th><th>Segmento</th><th>Plano</th><th>Referência</th><th>Valor base</th><th>Percentual</th><th>Valor</th><th>Status</th><th>Recebido em</th><th>Descrição</th></tr>
+    <tr><th class="title" colspan="21">Pagamentos e Premiações · uma linha por cliente</th></tr>
+    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="12"></td></tr>
+    <tr><th>Cliente</th><th>Segmento</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>P1 vencimento</th><th>P1 %</th><th>P1 valor</th><th>P1 status</th><th>P2 vencimento</th><th>P2 %</th><th>P2 valor</th><th>P2 status</th><th>P3 vencimento</th><th>P3 %</th><th>P3 valor</th><th>P3 status</th><th>Premiação</th><th>Status premiação</th><th>Descrição</th><th>Total</th></tr>
     ${rows}
   </table></body></html>`;
   const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
@@ -1474,8 +1501,12 @@ async function openEntityForm(entity, item = null) {
   if (schema.fields.some((field) => field[2] === "lead")) await ensureLeads();
   if (schema.fields.some((field) => field[2] === "plan")) await ensurePlans();
   $("#modal-title").textContent = `${item ? "Editar" : "Novo"} ${schema.title.toLowerCase()}`;
+  const formFields = entity === "leads" && !item
+    ? schema.fields.filter(([name]) => name !== "status")
+    : schema.fields;
   $("#modal-body").innerHTML = `<form id="entity-form" class="entity-form">
-    <div class="form-grid">${schema.fields.map((field) => renderField(field, item || {})).join("")}</div>
+    <div class="form-grid">${formFields.map((field) => renderField(field, item || {})).join("")}</div>
+    ${entity === "leads" && !item ? '<p class="lead-initial-status-note">O lead será cadastrado como <strong>Novo</strong>. Depois, mova-o manualmente pelo Kanban.</p>' : ""}
     ${entity === "leads" ? '<div id="lead-plan-preview"></div>' : ""}
     <div class="form-actions">
       <button type="button" class="button button-secondary" data-close-modal>Cancelar</button>
@@ -1624,19 +1655,6 @@ async function deleteRecord(entity, id) {
   } catch (error) {
     showToast(error.message, "error");
   }
-}
-
-async function convertLead(id) {
-  const lead = state.leads.find((item) => sameId(item.id, id));
-  if (!lead) return showToast("Lead não encontrado.", "error");
-  const closedStatus = optionValues("leads.status").find((item) => ["Fechado", "Convertido", "Cliente"].includes(item)) || "Fechado";
-  await api(`/api/leads/${id}`, {
-    method: "PUT",
-    body: JSON.stringify({ status: closedStatus, payment_status: lead.payment_status || "A receber" })
-  });
-  state.leads = [];
-  showToast(`${lead.name} convertido em cliente.`);
-  await navigate(state.view);
 }
 
 async function scheduleReturn(id) {
@@ -1877,8 +1895,6 @@ $("#content").addEventListener("click", async (event) => {
   }
   const remove = event.target.closest("[data-delete]");
   if (remove) return deleteRecord(remove.dataset.delete, remove.dataset.id);
-  const convert = event.target.closest("[data-convert-lead]");
-  if (convert) return convertLead(convert.dataset.convertLead);
   const schedule = event.target.closest("[data-schedule-return]");
   if (schedule) return scheduleReturn(schedule.dataset.scheduleReturn);
   const history = event.target.closest("[data-history-lead]");

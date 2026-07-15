@@ -897,6 +897,36 @@ textarea {
   color: var(--forest);
 }
 
+.payment-table {
+  min-width: 1460px;
+}
+
+.payment-installment {
+  min-width: 145px;
+  display: grid;
+  gap: 4px;
+}
+
+.payment-installment > strong {
+  color: var(--forest);
+  font-size: 12px;
+}
+
+.payment-installment > span,
+.payment-installment > small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.payment-installment > small b {
+  color: #b33a2d;
+}
+
+.payment-not-applicable {
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .payment-status-toggle {
   display: inline-flex;
   align-items: center;
@@ -944,6 +974,31 @@ textarea {
 
 .payment-status-toggle strong {
   font-size: 11px;
+}
+
+.payment-status-compact {
+  margin-top: 3px;
+  gap: 6px;
+}
+
+.payment-status-compact .toggle-track {
+  width: 32px;
+  height: 18px;
+}
+
+.payment-status-compact .toggle-track::after {
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+}
+
+.payment-status-compact input:checked + .toggle-track::after {
+  transform: translateX(14px);
+}
+
+.payment-status-compact strong {
+  font-size: 9px;
 }
 
 .backup-panel {
@@ -1465,6 +1520,20 @@ textarea {
 
 .field-full {
   grid-column: 1 / -1;
+}
+
+.lead-initial-status-note {
+  margin: -2px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #d8e6e1;
+  border-radius: 10px;
+  background: #f5faf8;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.lead-initial-status-note strong {
+  color: var(--forest);
 }
 
 .form-actions {

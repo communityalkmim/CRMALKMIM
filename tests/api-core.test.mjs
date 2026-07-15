@@ -5,12 +5,19 @@ import {
   addMonths,
   applyPlanRulePayload,
   checkLoginRateLimit,
+  initialLeadStatus,
   validateEntityPayload,
   verifyJsonRequest,
   verifySameOriginRequest
 } from "../serverless/api-core.mjs";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
+
+test("novo lead sempre inicia na primeira coluna do Kanban", () => {
+  assert.equal(initialLeadStatus([{ value: "Novo" }, { value: "Em contato" }]), "Novo");
+  assert.equal(initialLeadStatus([{ value: "Entrada" }]), "Entrada");
+  assert.equal(initialLeadStatus([]), "Novo");
+});
 
 test("applyPlanRulePayload calcula comissao e premiacao do lead", () => {
   const result = applyPlanRulePayload(

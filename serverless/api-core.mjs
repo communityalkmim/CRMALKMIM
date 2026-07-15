@@ -54,6 +54,10 @@ const SESSION_CACHE_TTL_MS = 30_000;
 const SESSION_CACHE_MAX = 200;
 const userSessionCache = new Map();
 
+export function initialLeadStatus(optionRows = []) {
+  return optionRows[0]?.value || "Novo";
+}
+
 function env(name) {
   return process.env[name] || "";
 }
@@ -859,9 +863,21 @@ async function syncLeadPayments(token, lead) {
 
 async function createEntity(entity, body, session) {
   const table = entityConfig[entity].table;
-  let payload = { ...validateEntityPayload(entity, body), user_id: session.user.id };
+  const createBody = entity === "leads" && !Object.prototype.hasOwnProperty.call(body, "status")
+    ? { ...body, status: "Novo" }
+    : body;
+  let payload = { ...validateEntityPayload(entity, createBody), user_id: session.user.id };
   if (entity === "plans") payload.commission_percent = payload.commission_1_percent;
-  if (entity === "leads") payload = await applyPlanRule(session.accessToken, payload);
+  if (entity === "leads") {
+    const statusOptions = await restSelect("option_values", session.accessToken, {
+      select: "value",
+      filters: { module: "leads", field: "status" },
+      order: ["sort_order.asc"],
+      limit: 1
+    });
+    payload.status = initialLeadStatus(statusOptions);
+    payload = await applyPlanRule(session.accessToken, payload);
+  }
   const data = await restInsert(table, session.accessToken, payload);
   if (entity === "leads") await syncLeadPayments(session.accessToken, { ...payload, id: data.id });
   return { id: data.id };
