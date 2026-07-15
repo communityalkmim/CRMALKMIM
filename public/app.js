@@ -1,6 +1,6 @@
 import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=__BUILD_VERSION__";
 import { formatDate, formatDateTime } from "./date-utils.js?v=__BUILD_VERSION__";
-import { activePaymentTotal, groupPaymentsByLead } from "./payment-utils.js?v=__BUILD_VERSION__";
+import { activePaymentTotal, fortnightRanges, groupPaymentsByLead } from "./payment-utils.js?v=__BUILD_VERSION__";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -883,6 +883,11 @@ async function renderPayments() {
           <option>Recebido</option>
           <option>Cancelado</option>
         </select>
+        <select id="payment-cycle-filter" class="filter-select">
+          <option value="">Todas as quinzenas</option>
+          <option value="current">Quinzena atual</option>
+          <option value="next">Próxima quinzena</option>
+        </select>
         <label class="date-filter"><span>De</span><input id="payment-date-from" type="date" /></label>
         <label class="date-filter"><span>Até</span><input id="payment-date-to" type="date" /></label>
       </div>
@@ -898,15 +903,18 @@ async function renderPayments() {
     const segment = $("#payment-segment-filter").value;
     const kind = $("#payment-kind-filter").value;
     const paymentStatus = $("#payment-status-filter").value;
+    const cycle = $("#payment-cycle-filter").value;
     const from = $("#payment-date-from").value;
     const to = $("#payment-date-to").value;
+    const cycleRange = cycle ? fortnightRanges(new Date().toISOString().slice(0, 10))[cycle] : null;
     const scopeMatch = (payment) => {
-      const date = payment.due_date || "";
+      const date = payment.expected_payment_date || payment.due_date || "";
       return Number(payment.amount || 0) > 0
         && (!kind || payment.kind === kind)
         && (!paymentStatus || payment.status === paymentStatus)
         && (!from || date >= from)
-        && (!to || date <= to);
+        && (!to || date <= to)
+        && (!cycleRange || (date >= cycleRange.from && date <= cycleRange.to));
     };
     const filtered = paymentGroups.filter((group) => {
       const references = group.payments
@@ -932,7 +940,7 @@ async function renderPayments() {
     $("#payments-table").innerHTML = renderPaymentsTable(filtered);
   };
 
-  ["payment-search-field", "payment-search", "payment-segment-filter", "payment-plan-filter", "payment-kind-filter", "payment-status-filter", "payment-date-from", "payment-date-to"]
+  ["payment-search-field", "payment-search", "payment-segment-filter", "payment-plan-filter", "payment-kind-filter", "payment-status-filter", "payment-cycle-filter", "payment-date-from", "payment-date-to"]
     .forEach((id) => $(`#${id}`).addEventListener(id === "payment-search" ? "input" : "change", applyFilters));
   $("#payment-search-field").addEventListener("change", () => {
     const labels = {
@@ -978,7 +986,7 @@ async function renderPayments() {
 function renderPaymentsSummary(items) {
   const today = new Date().toISOString().slice(0, 10);
   const receivableItems = items.filter((item) => item.status === "A receber");
-  const overdueItems = receivableItems.filter((item) => item.due_date && item.due_date < today);
+  const overdueItems = receivableItems.filter((item) => (item.expected_payment_date || item.due_date) < today);
   const receivable = receivableItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const received = items.filter((item) => item.status === "Recebido").reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const overdue = overdueItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -996,7 +1004,7 @@ function renderPaymentsTable(items) {
   return `<div class="table-wrap"><table class="data-table payment-table">
     <thead><tr><th>Cliente</th><th>Segmento / plano</th><th>Vigência</th><th>Valor do plano</th><th>Comissão 1</th><th>Comissão 2</th><th>Comissão 3</th><th>Premiação</th><th>Total</th></tr></thead>
     <tbody>${items.map((group) => {
-      const overdue = group.payments.some((payment) => Number(payment.amount || 0) > 0 && payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10));
+      const overdue = group.payments.some((payment) => Number(payment.amount || 0) > 0 && payment.status === "A receber" && (payment.expected_payment_date || payment.due_date) < new Date().toISOString().slice(0, 10));
       return `<tr class="${overdue ? "payment-overdue-row" : ""}">
       <td><strong>${escapeHtml(group.lead_name || "-")}</strong><br><span class="muted">${escapeHtml(group.lead_phone || "")}</span></td>
       <td>${escapeHtml(group.plan_segment || "-")}<br><span class="muted">${escapeHtml(group.plan_name || "-")}</span></td>
@@ -1014,11 +1022,13 @@ function renderPaymentsTable(items) {
 
 function renderPaymentFlag(payment, label) {
   if (!payment || Number(payment.amount || 0) <= 0) return '<span class="payment-not-applicable">Não cadastrada</span>';
-  const overdue = payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10);
+  const expectedDate = payment.expected_payment_date || payment.due_date;
+  const overdue = payment.status === "A receber" && expectedDate && expectedDate < new Date().toISOString().slice(0, 10);
   return `<div class="payment-installment">
     <strong class="financial-value">${currency(payment.amount)}</strong>
     <span>${escapeHtml(label)}${payment.kind === "commission" ? ` · ${Number(payment.percent || 0)}%` : ""}</span>
-    <small>Vence ${formatDate(payment.due_date)}${overdue ? ' · <b>Em atraso</b>' : ""}</small>
+    <small>Competência ${formatDate(payment.due_date)}</small>
+    <small>Repasse ${formatDate(expectedDate)}${overdue ? ' · <b>Em atraso</b>' : ""}</small>
     <label class="payment-status-toggle payment-status-compact">
       <input type="checkbox" data-payment-status-toggle="${payment.id}" ${payment.status === "Recebido" ? "checked" : ""} ${payment.status === "Cancelado" ? "disabled" : ""} />
       <span class="toggle-track"></span>
@@ -1040,9 +1050,10 @@ function exportPaymentsXls(items) {
   const bonuses = allPayments.filter((item) => item.kind === "bonus").reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const paymentCells = (payment) => payment && Number(payment.amount || 0) > 0 ? `
     <td class="date">${excelEscape(formatDate(payment.due_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td class="date">${excelEscape(formatDate(payment.expected_payment_date || payment.due_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
     <td class="percent">${Number(payment.percent || 0) / 100}</td>
     <td class="money">${Number(payment.amount || 0)}</td>
-    <td>${excelEscape(payment.status)}</td>` : "<td></td><td></td><td></td><td>Não cadastrada</td>";
+    <td>${excelEscape(payment.status)}</td>` : "<td></td><td></td><td></td><td></td><td>Não cadastrada</td>";
   const rows = items.map((group) => `<tr>
     <td>${excelEscape(group.lead_name || "")}</td>
     <td>${excelEscape(group.plan_segment || "")}</td>
@@ -1067,9 +1078,9 @@ function exportPaymentsXls(items) {
     .percent{mso-number-format:"0.00%"}
     .date{mso-number-format:"dd/mm/yyyy"}
   </style></head><body><table>
-    <tr><th class="title" colspan="21">Pagamentos e Premiações · uma linha por cliente</th></tr>
-    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="12"></td></tr>
-    <tr><th>Cliente</th><th>Segmento</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>P1 vencimento</th><th>P1 %</th><th>P1 valor</th><th>P1 status</th><th>P2 vencimento</th><th>P2 %</th><th>P2 valor</th><th>P2 status</th><th>P3 vencimento</th><th>P3 %</th><th>P3 valor</th><th>P3 status</th><th>Premiação</th><th>Status premiação</th><th>Descrição</th><th>Total</th></tr>
+    <tr><th class="title" colspan="24">Pagamentos e Premiações · uma linha por cliente</th></tr>
+    <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="15"></td></tr>
+    <tr><th>Cliente</th><th>Segmento</th><th>Plano</th><th>Vigência</th><th>Valor do plano</th><th>P1 competência</th><th>P1 repasse</th><th>P1 %</th><th>P1 valor</th><th>P1 status</th><th>P2 competência</th><th>P2 repasse</th><th>P2 %</th><th>P2 valor</th><th>P2 status</th><th>P3 competência</th><th>P3 repasse</th><th>P3 %</th><th>P3 valor</th><th>P3 status</th><th>Premiação</th><th>Status premiação</th><th>Descrição</th><th>Total</th></tr>
     ${rows}
   </table></body></html>`;
   const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });

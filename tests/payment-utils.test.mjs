@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activePaymentTotal, groupPaymentsByLead } from "../public/payment-utils.js";
+import { activePaymentTotal, fortnightRanges, groupPaymentsByLead } from "../public/payment-utils.js";
 
 test("groupPaymentsByLead cria uma linha por cliente e preserva os flags", () => {
   const groups = groupPaymentsByLead([
@@ -23,4 +23,15 @@ test("activePaymentTotal ignora pagamentos cancelados", () => {
     { id: "p2", lead_id: "l1", kind: "commission", installment: 2, amount: 50, status: "Cancelado" }
   ]);
   assert.equal(activePaymentTotal(group), 100);
+});
+
+test("fortnightRanges calcula quinzena atual e próxima", () => {
+  assert.deepEqual(fortnightRanges("2026-07-08"), {
+    current: { from: "2026-07-01", to: "2026-07-15" },
+    next: { from: "2026-07-16", to: "2026-07-31" }
+  });
+  assert.deepEqual(fortnightRanges("2026-07-20"), {
+    current: { from: "2026-07-16", to: "2026-07-31" },
+    next: { from: "2026-08-01", to: "2026-08-15" }
+  });
 });

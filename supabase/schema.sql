@@ -143,6 +143,7 @@ create table if not exists public.lead_payments (
   kind text not null check (kind in ('commission', 'bonus')),
   installment smallint not null default 0 check (installment between 0 and 3),
   due_date date,
+  expected_payment_date date,
   percent numeric(6,2),
   source_amount numeric(12,2) not null default 0,
   amount numeric(12,2) not null default 0,
@@ -152,6 +153,15 @@ create table if not exists public.lead_payments (
   updated_at timestamptz not null default now(),
   unique (user_id, lead_id, kind, installment)
 );
+
+alter table public.lead_payments add column if not exists expected_payment_date date;
+update public.lead_payments
+set expected_payment_date = case
+  when due_date is null then null
+  when extract(day from due_date) <= 15 then (date_trunc('month', due_date) + interval '14 days')::date
+  else (date_trunc('month', due_date) + interval '1 month - 1 day')::date
+end
+where expected_payment_date is null;
 
 do $$
 begin
@@ -284,6 +294,7 @@ create index if not exists tasks_lead_id_idx on public.tasks(lead_id);
 create index if not exists lead_payments_user_due_idx on public.lead_payments(user_id, due_date);
 create index if not exists lead_payments_lead_id_idx on public.lead_payments(lead_id);
 create index if not exists lead_payments_user_status_idx on public.lead_payments(user_id, status);
+create index if not exists lead_payments_user_expected_idx on public.lead_payments(user_id, expected_payment_date);
 
 alter table public.plans enable row level security;
 alter table public.leads enable row level security;

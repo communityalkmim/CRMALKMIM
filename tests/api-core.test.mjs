@@ -5,6 +5,7 @@ import {
   addMonths,
   applyPlanRulePayload,
   checkLoginRateLimit,
+  fortnightPaymentDate,
   initialLeadStatus,
   validateEntityPayload,
   verifyJsonRequest,
@@ -17,6 +18,14 @@ test("novo lead sempre inicia na primeira coluna do Kanban", () => {
   assert.equal(initialLeadStatus([{ value: "Novo" }, { value: "Em contato" }]), "Novo");
   assert.equal(initialLeadStatus([{ value: "Entrada" }]), "Entrada");
   assert.equal(initialLeadStatus([]), "Novo");
+});
+
+test("fortnightPaymentDate agenda repasse no dia 15 ou último dia", () => {
+  assert.equal(fortnightPaymentDate("2026-07-08"), "2026-07-15");
+  assert.equal(fortnightPaymentDate("2026-07-15"), "2026-07-15");
+  assert.equal(fortnightPaymentDate("2026-07-16"), "2026-07-31");
+  assert.equal(fortnightPaymentDate("2026-02-20"), "2026-02-28");
+  assert.equal(fortnightPaymentDate("2028-02-20"), "2028-02-29");
 });
 
 test("applyPlanRulePayload calcula comissao e premiacao do lead", () => {

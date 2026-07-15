@@ -32,3 +32,26 @@ export function activePaymentTotal(group) {
     .filter((payment) => payment.status !== "Cancelado")
     .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
 }
+
+function isoDate(year, month, day) {
+  return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
+}
+
+export function fortnightRanges(dateValue) {
+  const source = new Date(`${dateValue}T12:00:00Z`);
+  if (Number.isNaN(source.getTime())) return { current: null, next: null };
+  const year = source.getUTCFullYear();
+  const month = source.getUTCMonth();
+  const day = source.getUTCDate();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  if (day <= 15) {
+    return {
+      current: { from: isoDate(year, month, 1), to: isoDate(year, month, 15) },
+      next: { from: isoDate(year, month, 16), to: isoDate(year, month, lastDay) }
+    };
+  }
+  return {
+    current: { from: isoDate(year, month, 16), to: isoDate(year, month, lastDay) },
+    next: { from: isoDate(year, month + 1, 1), to: isoDate(year, month + 1, 15) }
+  };
+}

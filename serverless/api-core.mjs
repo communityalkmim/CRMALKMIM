@@ -813,22 +813,37 @@ export function addMonths(dateValue, months) {
   return source.toISOString().slice(0, 10);
 }
 
+export function fortnightPaymentDate(dateValue) {
+  if (!dateValue) return null;
+  const source = new Date(`${dateValue}T12:00:00Z`);
+  if (Number.isNaN(source.getTime())) return null;
+  const year = source.getUTCFullYear();
+  const month = source.getUTCMonth();
+  const day = source.getUTCDate();
+  const payoutDay = day <= 15 ? 15 : new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, payoutDay)).toISOString().slice(0, 10);
+}
+
 async function syncLeadPayments(token, lead) {
   const baseDate = lead.effective_date || lead.contact_date || lead.entry_date || null;
   if (!lead.plan_id) {
     await restDeleteWhere("lead_payments", token, { lead_id: lead.id, kind: "commission" });
   } else {
-    const rows = [1, 2, 3].map((installment) => ({
+    const rows = [1, 2, 3].map((installment) => {
+      const dueDate = addMonths(baseDate, installment - 1);
+      return {
       user_id: lead.user_id,
       lead_id: lead.id,
       kind: "commission",
       installment,
-      due_date: addMonths(baseDate, installment - 1),
+      due_date: dueDate,
+      expected_payment_date: fortnightPaymentDate(dueDate),
       percent: Number(lead[`commission_${installment}_percent`] || 0),
       source_amount: Number(lead.plan_value || 0),
       amount: Number(lead[`commission_${installment}`] || 0),
       updated_at: new Date().toISOString()
-    }));
+      };
+    });
     await supabaseRequest("/rest/v1/lead_payments", {
       method: "POST",
       token,
@@ -850,6 +865,7 @@ async function syncLeadPayments(token, lead) {
         kind: "bonus",
         installment: 0,
         due_date: baseDate,
+        expected_payment_date: fortnightPaymentDate(baseDate),
         percent: null,
         source_amount: Number(lead.bonus_value),
         amount: Number(lead.bonus_value),
