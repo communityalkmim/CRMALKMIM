@@ -17,6 +17,13 @@ const optionDefaults = {
   ]
 };
 
+const defaultPlanNames = [
+  "Amil", "Vera Cruz", "Hapvida", "Medsênior", "SulAmérica",
+  "Bradesco Saúde", "Porto Saúde", "Uniodonto", "Amil Dental", "Santa Tereza"
+];
+const planSegments = new Set(["Adesão/PF", "PME"]);
+const financialStatuses = new Set(["A receber", "Recebido", "Cancelado"]);
+
 const entityConfig = {
   plans: { table: "plans" },
   leads: { table: "leads" },
@@ -471,7 +478,17 @@ function booleanValue(value) {
 const entitySchemas = {
   plans: {
     name: { required: true, validate: (value) => requiredText(value, "nome do plano", 120) },
-    commission_percent: { required: true, validate: (value) => numberValue(value, "percentual de comissão", { required: true, min: 0, max: 1000 }) }
+    segment: {
+      required: true,
+      validate: (value) => {
+        const segment = requiredText(value, "segmento", 40);
+        if (!planSegments.has(segment)) throw httpError("Segmento de plano inválido.");
+        return segment;
+      }
+    },
+    commission_1_percent: { required: true, validate: (value) => numberValue(value, "comissão da parcela 1", { required: true, min: 0, max: 1000 }) },
+    commission_2_percent: { required: true, validate: (value) => numberValue(value, "comissão da parcela 2", { required: true, min: 0, max: 1000 }) },
+    commission_3_percent: { required: true, validate: (value) => numberValue(value, "comissão da parcela 3", { required: true, min: 0, max: 1000 }) }
   },
   leads: {
     name: { required: true, validate: (value) => requiredText(value, "nome", 160) },
@@ -615,6 +632,19 @@ async function restDelete(table, token, id) {
   return { ok: true };
 }
 
+async function restDeleteWhere(table, token, filters) {
+  const query = {};
+  Object.entries(filters).forEach(([column, value]) => {
+    query[column] = `eq.${restValue(value)}`;
+  });
+  await supabaseRequest(`/rest/v1/${table}`, {
+    method: "DELETE",
+    token,
+    query,
+    prefer: "return=minimal"
+  });
+}
+
 async function ensureDefaultOptions(token, userId) {
   const existing = await restSelect("option_values", token, { select: "module,field,value" });
   const known = new Set((existing || []).map((item) => `${item.module}.${item.field}.${item.value}`));
@@ -637,6 +667,26 @@ async function ensureDefaultOptions(token, userId) {
   }
 }
 
+async function ensureDefaultPlans(token, userId) {
+  const existing = await restSelect("plans", token, { select: "id", limit: 1 });
+  if (existing?.length) return;
+  const rows = [...planSegments].flatMap((segment) => defaultPlanNames.map((name) => ({
+    user_id: userId,
+    segment,
+    name,
+    commission_percent: 0,
+    commission_1_percent: 0,
+    commission_2_percent: 0,
+    commission_3_percent: 0
+  })));
+  await supabaseRequest("/rest/v1/plans", {
+    method: "POST",
+    token,
+    body: rows,
+    prefer: "resolution=ignore-duplicates"
+  });
+}
+
 async function selectEntity(entity, token, { pagination = {}, filters = {}, select } = {}) {
   const table = entityConfig[entity].table;
   const relationSelect = {
@@ -646,7 +696,7 @@ async function selectEntity(entity, token, { pagination = {}, filters = {}, sele
     followups: "*,leads(name,phone,status)"
   };
   const order = {
-    plans: ["name.asc"],
+    plans: ["segment.asc", "name.asc"],
     appointments: ["date.asc", "time.asc"],
     tasks: ["date.asc", "time.asc"],
     pending: ["due_date.asc"],
@@ -682,9 +732,16 @@ export function applyPlanRulePayload(payload, plan) {
       ...payload,
       plan_id: null,
       plan_name: null,
+      plan_segment: null,
       plan_value: 0,
       commission_percent: 0,
+      commission_1_percent: 0,
+      commission_2_percent: 0,
+      commission_3_percent: 0,
       commission: 0,
+      commission_1: 0,
+      commission_2: 0,
+      commission_3: 0,
       has_bonus: false,
       bonus_description: null,
       bonus_value: 0,
@@ -694,16 +751,29 @@ export function applyPlanRulePayload(payload, plan) {
   if (!plan) throw new Error("Plano nao encontrado.");
   const planValue = Number(payload.plan_value || 0);
   if (planValue <= 0) throw new Error("Informe o valor fechado do plano.");
-  const commissionPercent = Number(plan.commission_percent || 0);
+  const commissionPercents = [
+    Number(plan.commission_1_percent ?? plan.commission_percent ?? 0),
+    Number(plan.commission_2_percent || 0),
+    Number(plan.commission_3_percent || 0)
+  ];
+  const commissions = commissionPercents.map((percent) => Math.round(planValue * percent) / 100);
+  const commissionPercent = commissionPercents.reduce((sum, percent) => sum + percent, 0);
   const hasBonus = Boolean(payload.has_bonus);
   const bonusValue = hasBonus ? Number(payload.bonus_value || 0) : 0;
   if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiacao.");
   return {
     ...payload,
     plan_name: plan.name,
+    plan_segment: plan.segment || "Adesão/PF",
     plan_value: planValue,
     commission_percent: commissionPercent,
-    commission: Math.round(planValue * commissionPercent) / 100,
+    commission_1_percent: commissionPercents[0],
+    commission_2_percent: commissionPercents[1],
+    commission_3_percent: commissionPercents[2],
+    commission: commissions.reduce((sum, value) => sum + value, 0),
+    commission_1: commissions[0],
+    commission_2: commissions[1],
+    commission_3: commissions[2],
     has_bonus: hasBonus,
     bonus_description: hasBonus ? payload.bonus_description || null : null,
     bonus_value: bonusValue,
@@ -720,7 +790,7 @@ async function applyPlanRule(token, payload) {
   }
   if (!payload.plan_id) return applyPlanRulePayload(payload);
   const plans = await restSelect("plans", token, {
-    select: "id,name,commission_percent",
+    select: "id,name,segment,commission_percent,commission_1_percent,commission_2_percent,commission_3_percent",
     filters: { id: payload.plan_id },
     limit: 1
   });
@@ -728,11 +798,72 @@ async function applyPlanRule(token, payload) {
   return applyPlanRulePayload(payload, plan);
 }
 
+export function addMonths(dateValue, months) {
+  if (!dateValue) return null;
+  const source = new Date(`${dateValue}T12:00:00Z`);
+  const originalDay = source.getUTCDate();
+  source.setUTCDate(1);
+  source.setUTCMonth(source.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth() + 1, 0)).getUTCDate();
+  source.setUTCDate(Math.min(originalDay, lastDay));
+  return source.toISOString().slice(0, 10);
+}
+
+async function syncLeadPayments(token, lead) {
+  const baseDate = lead.effective_date || lead.contact_date || lead.entry_date || null;
+  if (!lead.plan_id) {
+    await restDeleteWhere("lead_payments", token, { lead_id: lead.id, kind: "commission" });
+  } else {
+    const rows = [1, 2, 3].map((installment) => ({
+      user_id: lead.user_id,
+      lead_id: lead.id,
+      kind: "commission",
+      installment,
+      due_date: addMonths(baseDate, installment - 1),
+      percent: Number(lead[`commission_${installment}_percent`] || 0),
+      source_amount: Number(lead.plan_value || 0),
+      amount: Number(lead[`commission_${installment}`] || 0),
+      updated_at: new Date().toISOString()
+    }));
+    await supabaseRequest("/rest/v1/lead_payments", {
+      method: "POST",
+      token,
+      body: rows,
+      query: { on_conflict: "user_id,lead_id,kind,installment" },
+      prefer: "resolution=merge-duplicates"
+    });
+  }
+
+  if (!lead.has_bonus || Number(lead.bonus_value || 0) <= 0) {
+    await restDeleteWhere("lead_payments", token, { lead_id: lead.id, kind: "bonus" });
+  } else {
+    await supabaseRequest("/rest/v1/lead_payments", {
+      method: "POST",
+      token,
+      body: [{
+        user_id: lead.user_id,
+        lead_id: lead.id,
+        kind: "bonus",
+        installment: 0,
+        due_date: baseDate,
+        percent: null,
+        source_amount: Number(lead.bonus_value),
+        amount: Number(lead.bonus_value),
+        updated_at: new Date().toISOString()
+      }],
+      query: { on_conflict: "user_id,lead_id,kind,installment" },
+      prefer: "resolution=merge-duplicates"
+    });
+  }
+}
+
 async function createEntity(entity, body, session) {
   const table = entityConfig[entity].table;
   let payload = { ...validateEntityPayload(entity, body), user_id: session.user.id };
+  if (entity === "plans") payload.commission_percent = payload.commission_1_percent;
   if (entity === "leads") payload = await applyPlanRule(session.accessToken, payload);
   const data = await restInsert(table, session.accessToken, payload);
+  if (entity === "leads") await syncLeadPayments(session.accessToken, { ...payload, id: data.id });
   return { id: data.id };
 }
 
@@ -740,9 +871,31 @@ async function updateEntity(entity, id, body, session) {
   uuid(id, "id", { required: true });
   const table = entityConfig[entity].table;
   let payload = validateEntityPayload(entity, body, { partial: true });
-  if (entity === "leads") payload = await applyPlanRule(session.accessToken, payload);
+  let syncedLead = null;
+  if (entity === "plans" && Object.prototype.hasOwnProperty.call(payload, "commission_1_percent")) {
+    payload.commission_percent = payload.commission_1_percent;
+  }
+  if (entity === "leads") {
+    const existing = (await restSelect("leads", session.accessToken, { filters: { id }, limit: 1 }))?.[0];
+    if (!existing) throw httpError("Lead não encontrado.", 404);
+    syncedLead = await applyPlanRule(session.accessToken, { ...existing, ...payload });
+    const financialFields = [
+      "plan_id", "plan_name", "plan_segment", "plan_value", "commission_percent",
+      "commission_1_percent", "commission_2_percent", "commission_3_percent",
+      "commission", "commission_1", "commission_2", "commission_3",
+      "has_bonus", "bonus_description", "bonus_value", "payment_status"
+    ];
+    payload = {
+      ...payload,
+      ...Object.fromEntries(financialFields.map((field) => [field, syncedLead[field]]))
+    };
+  }
   if (["plans", "leads"].includes(entity)) payload.updated_at = new Date().toISOString();
-  return restUpdate(table, session.accessToken, id, payload);
+  const result = await restUpdate(table, session.accessToken, id, payload);
+  if (entity === "leads") {
+    await syncLeadPayments(session.accessToken, { ...syncedLead, id, user_id: session.user.id, ...payload });
+  }
+  return result;
 }
 
 async function deleteEntity(entity, id, session) {
@@ -867,6 +1020,63 @@ async function dashboardData(session) {
   };
 }
 
+async function listPayments(session) {
+  const rows = await restSelect("lead_payments", session.accessToken, {
+    select: "*,leads(name,phone,effective_date,plan_name,plan_segment,plan_value,bonus_description)",
+    order: ["due_date.asc", "created_at.asc"]
+  });
+  return (rows || []).map((row) => {
+    const lead = row.leads || {};
+    const result = {
+      ...row,
+      lead_name: lead.name,
+      lead_phone: lead.phone,
+      effective_date: lead.effective_date,
+      plan_name: lead.plan_name,
+      plan_segment: lead.plan_segment,
+      plan_value: lead.plan_value,
+      bonus_description: lead.bonus_description
+    };
+    result.description = row.kind === "bonus" ? lead.bonus_description || "Premiação" : null;
+    delete result.leads;
+    return result;
+  });
+}
+
+async function updatePayment(id, body, session) {
+  uuid(id, "pagamento", { required: true });
+  const status = requiredText(body.status, "status financeiro", 40);
+  if (!financialStatuses.has(status)) throw httpError("Status financeiro inválido.");
+  const current = (await restSelect("lead_payments", session.accessToken, {
+    select: "id,lead_id",
+    filters: { id },
+    limit: 1
+  }))?.[0];
+  if (!current) throw httpError("Pagamento não encontrado.", 404);
+
+  const receivedAt = status === "Recebido" ? new Date().toISOString() : null;
+  await restUpdate("lead_payments", session.accessToken, id, {
+    status,
+    received_at: receivedAt,
+    updated_at: new Date().toISOString()
+  });
+  const related = await restSelect("lead_payments", session.accessToken, {
+    select: "status,amount",
+    filters: { lead_id: current.lead_id }
+  });
+  const relevant = (related || []).filter((item) => Number(item.amount || 0) > 0);
+  const aggregateStatus = relevant.length && relevant.every((item) => item.status === "Recebido")
+    ? "Recebido"
+    : relevant.length && relevant.every((item) => item.status === "Cancelado")
+      ? "Cancelado"
+      : "A receber";
+  await restUpdate("leads", session.accessToken, current.lead_id, {
+    payment_status: aggregateStatus,
+    updated_at: new Date().toISOString()
+  });
+  return { ok: true, status, received_at: receivedAt, aggregateStatus };
+}
+
 function entityFilters(entity, searchParams) {
   const filters = {};
   const relationEntities = new Set(["appointments", "pending", "tasks", "followups"]);
@@ -881,12 +1091,19 @@ function entityFilters(entity, searchParams) {
 
 async function route(path, method, body, session, searchParams = new URLSearchParams()) {
   if (path === "/api/session" && method === "GET") {
-    await ensureDefaultOptions(session.accessToken, session.user.id);
+    await Promise.all([
+      ensureDefaultOptions(session.accessToken, session.user.id),
+      ensureDefaultPlans(session.accessToken, session.user.id)
+    ]);
     return { user: publicUser(session.user), csrfToken: session.csrfToken };
   }
   if (path === "/api/dashboard" && method === "GET") return dashboardData(session);
   if (path === "/api/options" && method === "GET") return listOptions(session);
   if (path === "/api/options" && method === "POST") return createOption(body, session);
+  if (path === "/api/payments" && method === "GET") return listPayments(session);
+
+  const paymentMatch = path.match(/^\/api\/payments\/([^/]+)$/);
+  if (paymentMatch && method === "PUT") return updatePayment(paymentMatch[1], body, session);
 
   const optionMatch = path.match(/^\/api\/options\/([^/]+)$/);
   if (optionMatch && method === "PUT") {
@@ -935,7 +1152,10 @@ export async function handleApiRequest({ path, method, headers = {}, body }) {
       const session = await authRequest("/auth/v1/token?grant_type=password", { email, password });
       clearLoginRateLimit(loginKey);
       const csrf = csrfToken();
-      await ensureDefaultOptions(session.access_token, session.user.id);
+      await Promise.all([
+        ensureDefaultOptions(session.access_token, session.user.id),
+        ensureDefaultPlans(session.access_token, session.user.id)
+      ]);
       return json(200, { user: publicUser(session.user), csrfToken: csrf }, authCookies(session, csrf));
     }
 

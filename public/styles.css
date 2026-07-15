@@ -615,7 +615,7 @@ textarea {
 .payment-stats-grid {
   margin-bottom: 16px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
   gap: 14px;
 }
 
@@ -1802,6 +1802,48 @@ textarea {
   gap: 14px;
 }
 
+.plan-settings-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.plan-settings-group {
+  padding: 18px;
+}
+
+.plan-settings-table input {
+  width: 100%;
+  min-width: 92px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfdfc;
+  color: var(--ink);
+  font: inherit;
+}
+
+.plan-settings-table td:first-child input {
+  min-width: 180px;
+}
+
+.plan-settings-table input:focus {
+  border-color: var(--forest);
+  outline: 2px solid rgba(36, 92, 84, 0.12);
+}
+
+.payment-overdue-row {
+  background: #fff9f7;
+}
+
+.overdue-label {
+  display: inline-block;
+  margin-top: 4px;
+  color: #b33a2d;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .plan-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(260px, 1fr));
@@ -1868,7 +1910,7 @@ textarea {
 }
 
 .commission-preview {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   margin: 4px 0 18px;
   padding: 12px;
   border: 1px solid #d8e6e1;

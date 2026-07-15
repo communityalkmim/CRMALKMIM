@@ -630,7 +630,7 @@ function renderLeadsTable(leads) {
       <td>${escapeHtml(lead.origin || "-")}</td>
       <td>${formatDate(lead.contact_date)}</td>
       <td>${formatDate(lead.effective_date)}</td>
-      <td><strong>${escapeHtml(lead.plan_name || "-")}</strong>${lead.plan_name ? `<br><span class="muted">${currency(lead.plan_value)} · ${Number(lead.commission_percent || 0)}%</span>` : ""}</td>
+      <td><strong>${escapeHtml(lead.plan_name || "-")}</strong>${lead.plan_name ? `<br><span class="muted">${escapeHtml(lead.plan_segment || "")} · ${currency(lead.plan_value)} · P1 ${Number(lead.commission_1_percent || 0)}% · P2 ${Number(lead.commission_2_percent || 0)}% · P3 ${Number(lead.commission_3_percent || 0)}%</span>` : ""}</td>
       <td>${badge(lead.status)}</td>
       <td><strong>${currency(lead.commission)}</strong>${lead.has_bonus ? `<br><span class="bonus-label">+ ${currency(lead.bonus_value)} · ${escapeHtml(lead.bonus_description || "Premiação")}</span>` : ""}</td>
       <td><div class="actions">
@@ -669,7 +669,7 @@ async function renderKanban() {
             ${cards.length ? cards.map((lead) => `<article class="kanban-card" draggable="true" data-lead-id="${lead.id}">
               <div class="lead-cell"><span class="lead-avatar">${escapeHtml(initials(lead.name))}</span><div><strong>${escapeHtml(lead.name)}</strong><span>${escapeHtml(lead.origin || "Origem não informada")}</span></div></div>
               <div class="kanban-contact">${icon("phone")} ${escapeHtml(lead.phone || "Sem telefone")}</div>
-              ${lead.plan_name ? `<div class="kanban-plan">${escapeHtml(lead.plan_name)} · ${Number(lead.commission_percent || 0)}%</div>` : ""}
+              ${lead.plan_name ? `<div class="kanban-plan">${escapeHtml(lead.plan_name)} · P1 ${Number(lead.commission_1_percent || 0)}% · P2 ${Number(lead.commission_2_percent || 0)}% · P3 ${Number(lead.commission_3_percent || 0)}%</div>` : ""}
               <footer>
                 <strong>${currency(lead.commission)}</strong>
                 <select class="kanban-move" data-kanban-move="${lead.id}" aria-label="Mover ${escapeHtml(lead.name)} para">
@@ -841,28 +841,14 @@ function paymentTotal(lead) {
   return Number(lead.commission || 0) + (lead.has_bonus ? Number(lead.bonus_value || 0) : 0);
 }
 
-function paymentStatus(lead) {
-  return lead.payment_status || "A receber";
-}
-
-function isPaymentReceived(lead) {
-  return paymentStatus(lead).toLowerCase() === "recebido";
-}
-
-function isPaymentReceivable(lead) {
-  return paymentStatus(lead).toLowerCase() === "a receber";
-}
-
 function paymentDate(lead) {
   return lead.contact_date || lead.entry_date || "";
 }
 
 async function renderPayments() {
-  const [leads, plans] = await Promise.all([ensureLeads(), ensurePlans(), ensureOptions()]);
-  const payments = leads
-    .filter((lead) => lead.plan_name || lead.plan_id)
-    .sort((left, right) => paymentDate(right).localeCompare(paymentDate(left)));
+  const [payments, plans] = await Promise.all([api("/api/payments"), ensurePlans()]);
   state.collections.payments = payments;
+  const planNames = [...new Set(plans.map((plan) => plan.name))].sort((a, b) => a.localeCompare(b));
   $("#content").innerHTML = `
     ${databaseUpdateNotice()}
     <section id="payments-summary" class="payment-stats-grid"></section>
@@ -872,16 +858,28 @@ async function renderPayments() {
           <option value="all">Todos</option>
           <option value="client">Nome do cliente</option>
           <option value="plan">Plano</option>
-          <option value="effective">Vigência</option>
+          <option value="reference">Parcela ou premiação</option>
         </select>
         <div class="search-field">${icon("search")}<input id="payment-search" placeholder="Pesquisar em todos os campos" /></div>
+        <select id="payment-segment-filter" class="filter-select">
+          <option value="">Todos os segmentos</option>
+          <option>Adesão/PF</option>
+          <option>PME</option>
+        </select>
         <select id="payment-plan-filter" class="filter-select">
           <option value="">Todos os planos</option>
-          ${plans.map((plan) => `<option value="${escapeHtml(plan.name)}">${escapeHtml(plan.name)}</option>`).join("")}
+          ${planNames.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+        </select>
+        <select id="payment-kind-filter" class="filter-select">
+          <option value="">Comissões e premiações</option>
+          <option value="commission">Somente comissões</option>
+          <option value="bonus">Somente premiações</option>
         </select>
         <select id="payment-status-filter" class="filter-select">
           <option value="">Todos os status financeiros</option>
-          ${optionValues("payments.status").map((status) => `<option>${escapeHtml(status)}</option>`).join("")}
+          <option>A receber</option>
+          <option>Recebido</option>
+          <option>Cancelado</option>
         </select>
         <label class="date-filter"><span>De</span><input id="payment-date-from" type="date" /></label>
         <label class="date-filter"><span>Até</span><input id="payment-date-to" type="date" /></label>
@@ -895,22 +893,27 @@ async function renderPayments() {
     const field = $("#payment-search-field").value;
     const term = $("#payment-search").value.trim().toLowerCase();
     const plan = $("#payment-plan-filter").value;
+    const segment = $("#payment-segment-filter").value;
+    const kind = $("#payment-kind-filter").value;
     const paymentStatus = $("#payment-status-filter").value;
     const from = $("#payment-date-from").value;
     const to = $("#payment-date-to").value;
-    const filtered = payments.filter((lead) => {
-      const date = paymentDate(lead);
+    const filtered = payments.filter((payment) => {
+      const date = payment.due_date || "";
+      const reference = payment.kind === "bonus" ? "Premiação" : `Parcela ${payment.installment}`;
       const values = {
-        client: lead.name || "",
-        plan: lead.plan_name || "",
-        effective: `${lead.effective_date || ""} ${formatDate(lead.effective_date)}`
+        client: payment.lead_name || "",
+        plan: payment.plan_name || "",
+        reference: `${reference} ${payment.description || ""}`
       };
       const haystack = field === "all"
-        ? `${values.client} ${values.plan} ${values.effective} ${lead.contact_date || ""}`
+        ? `${values.client} ${values.plan} ${values.reference} ${payment.plan_segment || ""} ${date} ${formatDate(date)}`
         : values[field] || "";
       return (!term || haystack.toLowerCase().includes(term))
-        && (!plan || lead.plan_name === plan)
-        && (!paymentStatus || (lead.payment_status || "A receber") === paymentStatus)
+        && (!segment || payment.plan_segment === segment)
+        && (!plan || payment.plan_name === plan)
+        && (!kind || payment.kind === kind)
+        && (!paymentStatus || payment.status === paymentStatus)
         && (!from || date >= from)
         && (!to || date <= to);
     });
@@ -919,14 +922,14 @@ async function renderPayments() {
     $("#payments-table").innerHTML = renderPaymentsTable(filtered);
   };
 
-  ["payment-search-field", "payment-search", "payment-plan-filter", "payment-status-filter", "payment-date-from", "payment-date-to"]
+  ["payment-search-field", "payment-search", "payment-segment-filter", "payment-plan-filter", "payment-kind-filter", "payment-status-filter", "payment-date-from", "payment-date-to"]
     .forEach((id) => $(`#${id}`).addEventListener(id === "payment-search" ? "input" : "change", applyFilters));
   $("#payment-search-field").addEventListener("change", () => {
     const labels = {
       all: "Pesquisar em todos os campos",
       client: "Digite o nome do cliente",
       plan: "Digite o nome do plano",
-      effective: "Digite a data ou vigência"
+      reference: "Digite parcela ou premiação"
     };
     $("#payment-search").placeholder = labels[$("#payment-search-field").value];
   });
@@ -934,22 +937,24 @@ async function renderPayments() {
   $("#payments-table").addEventListener("change", async (event) => {
     const toggle = event.target.closest("[data-payment-status-toggle]");
     if (!toggle) return;
-    const lead = state.collections.payments.find((item) => sameId(item.id, toggle.dataset.paymentStatusToggle));
-    if (!lead) return showToast("Pagamento não encontrado.", "error");
-    const previous = paymentStatus(lead);
+    const payment = state.collections.payments.find((item) => sameId(item.id, toggle.dataset.paymentStatusToggle));
+    if (!payment) return showToast("Pagamento não encontrado.", "error");
+    const previous = payment.status;
     const next = toggle.checked ? "Recebido" : "A receber";
-    lead.payment_status = next;
-    state.leads = state.leads.map((item) => sameId(item.id, lead.id) ? { ...item, payment_status: next } : item);
+    payment.status = next;
+    payment.received_at = next === "Recebido" ? new Date().toISOString() : null;
     try {
-      await api(`/api/leads/${lead.id}`, {
+      const updated = await api(`/api/payments/${payment.id}`, {
         method: "PUT",
-        body: JSON.stringify({ payment_status: next })
+        body: JSON.stringify({ status: next })
       });
+      Object.assign(payment, updated);
+      state.leads = [];
       showToast(`Status financeiro alterado para ${next}.`);
       applyFilters();
     } catch (error) {
-      lead.payment_status = previous;
-      toggle.checked = previous.toLowerCase() === "recebido";
+      payment.status = previous;
+      toggle.checked = previous === "Recebido";
       showToast(error.message, "error");
       applyFilters();
     }
@@ -958,37 +963,46 @@ async function renderPayments() {
 }
 
 function renderPaymentsSummary(items) {
-  const receivable = items.filter(isPaymentReceivable).reduce((sum, item) => sum + paymentTotal(item), 0);
-  const received = items.filter(isPaymentReceived).reduce((sum, item) => sum + paymentTotal(item), 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const receivableItems = items.filter((item) => item.status === "A receber");
+  const overdueItems = receivableItems.filter((item) => item.due_date && item.due_date < today);
+  const receivable = receivableItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const received = items.filter((item) => item.status === "Recebido").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const overdue = overdueItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const total = items.filter((item) => item.status !== "Cancelado").reduce((sum, item) => sum + Number(item.amount || 0), 0);
   $("#payments-summary").innerHTML = `
-    ${statCard("A receber", currency(receivable), "Pagamentos ainda abertos", "money", "#fff0d8")}
-    ${statCard("Recebido", currency(received), "Pagamentos marcados como recebidos", "check", "#d9eee8")}
-    ${statCard("Total geral", currency(receivable + received), "A receber + recebido", "dashboard", "#e2f1c4")}
+    ${statCard("A receber", currency(receivable), `${receivableItems.length} lançamento(s) em aberto`, "money", "#fff0d8")}
+    ${statCard("Recebido", currency(received), "Pagamentos confirmados", "check", "#d9eee8")}
+    ${statCard("Em atraso", currency(overdue), `${overdueItems.length} lançamento(s) vencido(s)`, "alert", "#ffe0dc")}
+    ${statCard("Total geral", currency(total), "Recebido + a receber", "dashboard", "#e2f1c4")}
   `;
 }
 
 function renderPaymentsTable(items) {
   if (!items.length) return emptyState("Nenhum pagamento encontrado", "Ajuste os filtros ou vincule um plano a um lead.", null, "money");
   return `<div class="table-wrap"><table class="data-table payment-table">
-    <thead><tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Status financeiro</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Total</th></tr></thead>
-    <tbody>${items.map((lead) => `<tr>
-      <td>${formatDate(paymentDate(lead))}</td>
-      <td><strong>${escapeHtml(lead.name)}</strong><br><span class="muted">${escapeHtml(lead.phone || "")}</span></td>
-      <td>${escapeHtml(lead.plan_name || "-")}</td>
-      <td>${formatDate(lead.effective_date)}</td>
+    <thead><tr><th>Vencimento</th><th>Cliente</th><th>Segmento / plano</th><th>Referência</th><th>Base</th><th>Percentual</th><th>Valor</th><th>Confirmação</th><th>Recebido em</th></tr></thead>
+    <tbody>${items.map((payment) => {
+      const overdue = payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10);
+      const reference = payment.kind === "bonus" ? "Premiação" : `Comissão · parcela ${payment.installment}`;
+      return `<tr class="${overdue ? "payment-overdue-row" : ""}">
+      <td><strong>${formatDate(payment.due_date)}</strong>${overdue ? `<br><span class="overdue-label">Em atraso</span>` : ""}</td>
+      <td><strong>${escapeHtml(payment.lead_name || "-")}</strong><br><span class="muted">${escapeHtml(payment.lead_phone || "")}</span></td>
+      <td>${escapeHtml(payment.plan_segment || "-")}<br><span class="muted">${escapeHtml(payment.plan_name || "-")}</span></td>
+      <td><strong>${escapeHtml(reference)}</strong>${payment.description ? `<br><span class="muted">${escapeHtml(payment.description)}</span>` : ""}</td>
+      <td>${payment.kind === "commission" ? currency(payment.source_amount) : "-"}</td>
+      <td>${payment.kind === "commission" ? `${Number(payment.percent || 0)}%` : "-"}</td>
+      <td><strong class="payment-total">${currency(payment.amount)}</strong></td>
       <td>
         <label class="payment-status-toggle">
-          <input type="checkbox" data-payment-status-toggle="${lead.id}" ${isPaymentReceived(lead) ? "checked" : ""} />
+          <input type="checkbox" data-payment-status-toggle="${payment.id}" ${payment.status === "Recebido" ? "checked" : ""} ${payment.status === "Cancelado" ? "disabled" : ""} />
           <span class="toggle-track"></span>
-          <strong>${escapeHtml(paymentStatus(lead))}</strong>
+          <strong>${escapeHtml(payment.status)}</strong>
         </label>
       </td>
-      <td>${currency(lead.plan_value)}</td>
-      <td>${Number(lead.commission_percent || 0)}%</td>
-      <td><strong>${currency(lead.commission)}</strong></td>
-      <td>${lead.has_bonus ? `<strong>${currency(lead.bonus_value)}</strong><br><span class="muted">${escapeHtml(lead.bonus_description || "Premiação")}</span>` : currency(0)}</td>
-      <td><strong class="payment-total">${currency(paymentTotal(lead))}</strong></td>
-    </tr>`).join("")}</tbody>
+      <td>${payment.received_at ? formatDate(payment.received_at) : "-"}</td>
+    </tr>`;
+    }).join("")}</tbody>
   </table></div>`;
 }
 
@@ -1000,20 +1014,20 @@ function excelEscape(value) {
 
 function exportPaymentsXls(items) {
   if (!items.length) return showToast("Não há pagamentos no filtro atual para exportar.", "error");
-  const commission = items.reduce((sum, item) => sum + Number(item.commission || 0), 0);
-  const bonuses = items.reduce((sum, item) => sum + (item.has_bonus ? Number(item.bonus_value || 0) : 0), 0);
-  const rows = items.map((lead) => `<tr>
-    <td class="date">${excelEscape(formatDate(paymentDate(lead), { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
-    <td>${excelEscape(lead.name)}</td>
-    <td>${excelEscape(lead.plan_name || "")}</td>
-    <td class="date">${excelEscape(formatDate(lead.effective_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
-    <td>${excelEscape(lead.payment_status || "A receber")}</td>
-    <td class="money">${Number(lead.plan_value || 0)}</td>
-    <td class="percent">${Number(lead.commission_percent || 0) / 100}</td>
-    <td class="money">${Number(lead.commission || 0)}</td>
-    <td class="money">${lead.has_bonus ? Number(lead.bonus_value || 0) : 0}</td>
-    <td>${excelEscape(lead.has_bonus ? lead.bonus_description || "Premiação" : "")}</td>
-    <td class="money">${paymentTotal(lead)}</td>
+  const commission = items.filter((item) => item.kind === "commission").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const bonuses = items.filter((item) => item.kind === "bonus").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const rows = items.map((payment) => `<tr>
+    <td class="date">${excelEscape(formatDate(payment.due_date, { day: "2-digit", month: "2-digit", year: "numeric" }))}</td>
+    <td>${excelEscape(payment.lead_name || "")}</td>
+    <td>${excelEscape(payment.plan_segment || "")}</td>
+    <td>${excelEscape(payment.plan_name || "")}</td>
+    <td>${excelEscape(payment.kind === "bonus" ? "Premiação" : `Parcela ${payment.installment}`)}</td>
+    <td class="money">${Number(payment.source_amount || 0)}</td>
+    <td class="percent">${Number(payment.percent || 0) / 100}</td>
+    <td class="money">${Number(payment.amount || 0)}</td>
+    <td>${excelEscape(payment.status)}</td>
+    <td class="date">${excelEscape(payment.received_at ? formatDate(payment.received_at, { day: "2-digit", month: "2-digit", year: "numeric" }) : "")}</td>
+    <td>${excelEscape(payment.description || "")}</td>
   </tr>`).join("");
   const html = `<!doctype html><html><head><meta charset="UTF-8"><style>
     table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt}
@@ -1027,7 +1041,7 @@ function exportPaymentsXls(items) {
   </style></head><body><table>
     <tr><th class="title" colspan="11">Pagamentos e Premiações</th></tr>
     <tr class="summary"><td colspan="2">Total de comissões</td><td class="money">${commission}</td><td colspan="2">Total de premiações</td><td class="money">${bonuses}</td><td colspan="2">Total geral</td><td class="money">${commission + bonuses}</td><td colspan="2"></td></tr>
-    <tr><th>Data de contato</th><th>Cliente</th><th>Plano</th><th>Vigência</th><th>Status financeiro</th><th>Valor do plano</th><th>Percentual</th><th>Comissão</th><th>Premiação</th><th>Descrição da premiação</th><th>Total</th></tr>
+    <tr><th>Vencimento</th><th>Cliente</th><th>Segmento</th><th>Plano</th><th>Referência</th><th>Valor base</th><th>Percentual</th><th>Valor</th><th>Status</th><th>Recebido em</th><th>Descrição</th></tr>
     ${rows}
   </table></body></html>`;
   const blob = new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" });
@@ -1127,7 +1141,7 @@ async function exportBackupXls() {
   ]);
   const sections = [
     ["Leads", ["Nome", "Telefone", "E-mail", "Origem", "Status", "Plano", "Valor", "Comissão", "Premiação"], leads.map((item) => [item.name, item.phone, item.email, item.origin, item.status, item.plan_name, currency(item.plan_value), currency(item.commission), currency(item.has_bonus ? item.bonus_value : 0)])],
-    ["Planos", ["Nome", "Comissão %"], plans.map((item) => [item.name, item.commission_percent])],
+    ["Planos", ["Segmento", "Nome", "Parcela 1 %", "Parcela 2 %", "Parcela 3 %"], plans.map((item) => [item.segment, item.name, item.commission_1_percent, item.commission_2_percent, item.commission_3_percent])],
     ["Tarefas", ["Título", "Cliente", "Data", "Hora", "Prioridade", "Status"], tasks.map((item) => [item.title, item.lead_name, item.date, item.time, item.priority, item.status])],
     ["Pendências", ["Tipo", "Cliente", "Prazo", "Prioridade", "Status"], pending.map((item) => [item.type, item.lead_name, item.due_date, item.priority, item.status])],
     ["Agenda", ["Título", "Cliente", "Data", "Hora", "Concluído"], appointments.map((item) => [item.title, item.lead_name, item.date, item.time, item.completed ? "Sim" : "Não"])],
@@ -1254,14 +1268,12 @@ const optionGroups = [
   ["tasks.category", "Tarefas", "Categorias", "Áreas de organização"],
   ["tasks.priority", "Tarefas", "Prioridades", "Níveis de importância"],
   ["tasks.status", "Tarefas", "Status", "Situações das tarefas"],
-  ["payments.status", "Pagamentos", "Status financeiro", "Situações de recebimento"],
   ["followup.template", "Follow-up", "Modelos de mensagem", "Textos prontos para WhatsApp"]
 ];
 
 const settingsSections = [
   ["leads", "Leads", "Origens e etapas do Kanban", "users"],
-  ["plans", "Planos", "Nome e comissão", "money"],
-  ["payments", "Pagamentos", "Status financeiro", "money"],
+  ["payments", "Pagamentos", "Planos e comissões", "money"],
   ["followup", "Follow-up", "Modelos de mensagem", "message"],
   ["pending", "Pendências", "Tipos e status", "alert"],
   ["tasks", "Tarefas", "Tipos, categorias e status", "check"]
@@ -1305,20 +1317,19 @@ async function renderSettings() {
 }
 
 function renderSettingsSection() {
-  if (state.settingsSection === "plans") {
+  if (state.settingsSection === "payments") {
     return `
       <div class="settings-section-header settings-section-actions">
         <div>
           <span class="eyebrow eyebrow-dark">Regras comerciais</span>
-          <h2>Planos</h2>
-          <p class="muted">Cadastre somente o nome do plano e o percentual de comissão.</p>
+          <h2>Planos e comissões</h2>
+          <p class="muted">Os percentuais são calculados sobre a primeira mensalidade informada no lead. A parcela 1 vence na vigência; as demais, nos meses seguintes.</p>
         </div>
         <button class="button button-primary" data-new="plans">${icon("plus")} Novo plano</button>
       </div>
-      <div class="plan-grid">
-        ${state.plans.length ? state.plans.map(renderPlanCard).join("") : `
-          <div class="panel empty-state"><div><h3>Nenhum plano cadastrado</h3><p>Cadastre o primeiro plano para vinculá-lo aos leads.</p><button class="button button-primary" data-new="plans">Cadastrar plano</button></div></div>
-        `}
+      <div class="plan-settings-groups">
+        ${renderPlanCommissionTable("Adesão/PF")}
+        ${renderPlanCommissionTable("PME")}
       </div>
     `;
   }
@@ -1336,22 +1347,23 @@ function renderSettingsSection() {
   `;
 }
 
-function renderPlanCard(plan) {
-  return `<article class="panel plan-card">
-    <div class="card-top">
-      <div>
-        <span class="settings-module">Plano</span>
-        <h3>${escapeHtml(plan.name)}</h3>
-      </div>
-      <div class="actions">
-        <button class="icon-button" data-edit="plans" data-id="${plan.id}" title="Editar plano">${icon("edit")}</button>
-        <button class="icon-button" data-delete="plans" data-id="${plan.id}" title="Excluir plano">${icon("trash")}</button>
-      </div>
-    </div>
-    <div class="plan-values">
-      <div><span>Comissão</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
-      <div><span>Cálculo</span><strong>Sobre o valor do lead</strong></div>
-    </div>
+function renderPlanCommissionTable(segment) {
+  const plans = state.plans.filter((plan) => plan.segment === segment);
+  return `<article class="panel plan-settings-group">
+    <div class="panel-header"><div><span class="settings-module">Segmento</span><h3>${escapeHtml(segment)}</h3><p>Percentuais por parcela de comissão.</p></div></div>
+    <div class="table-wrap"><table class="data-table plan-settings-table">
+      <thead><tr><th>Plano</th><th>Parcela 1 (%)</th><th>Parcela 2 (%)</th><th>Parcela 3 (%)</th><th>Ações</th></tr></thead>
+      <tbody>${plans.length ? plans.map((plan) => `<tr data-plan-row="${plan.id}">
+        <td><input name="name" value="${escapeHtml(plan.name)}" aria-label="Nome do plano" /></td>
+        <td><input name="commission_1_percent" type="number" min="0" step="0.01" value="${Number(plan.commission_1_percent || 0)}" aria-label="Comissão da parcela 1" /></td>
+        <td><input name="commission_2_percent" type="number" min="0" step="0.01" value="${Number(plan.commission_2_percent || 0)}" aria-label="Comissão da parcela 2" /></td>
+        <td><input name="commission_3_percent" type="number" min="0" step="0.01" value="${Number(plan.commission_3_percent || 0)}" aria-label="Comissão da parcela 3" /></td>
+        <td><div class="actions">
+          <button class="icon-button" data-save-plan="${plan.id}" title="Salvar plano">${icon("check")}</button>
+          <button class="icon-button" data-delete="plans" data-id="${plan.id}" title="Excluir plano">${icon("trash")}</button>
+        </div></td>
+      </tr>`).join("") : `<tr><td colspan="5" class="muted">Nenhum plano neste segmento.</td></tr>`}</tbody>
+    </table></div>
   </article>`;
 }
 
@@ -1398,8 +1410,11 @@ const schemas = {
     title: "Plano",
     endpoint: "plans",
     fields: [
+      ["segment", "Segmento", "select", true, [["Adesão/PF", "Adesão/PF"], ["PME", "PME"]]],
       ["name", "Nome do plano", "text", true],
-      ["commission_percent", "Percentual de comissão (%)", "number", true]
+      ["commission_1_percent", "Comissão da parcela 1 (%)", "number", true],
+      ["commission_2_percent", "Comissão da parcela 2 (%)", "number", true],
+      ["commission_3_percent", "Comissão da parcela 3 (%)", "number", true]
     ]
   },
   leads: {
@@ -1418,7 +1433,6 @@ const schemas = {
       ["has_bonus", "Possui premiação?", "select", true, [["0", "Não"], ["1", "Sim"]]],
       ["bonus_description", "Descrição da premiação", "text"],
       ["bonus_value", "Valor da premiação (R$)", "number"],
-      ["payment_status", "Status financeiro", "option", true, "payments.status"],
       ["status", "Status", "option", true, "leads.status"],
       ["notes", "Observações", "textarea", false, null, "full"]
     ]
@@ -1505,7 +1519,7 @@ async function openEntityForm(entity, item = null) {
     });
     if ("lead_id" in data) data.lead_id = data.lead_id || null;
     if ("plan_id" in data) data.plan_id = data.plan_id || null;
-    ["plan_value", "commission_percent", "bonus_value"].forEach((key) => {
+    ["plan_value", "commission_1_percent", "commission_2_percent", "commission_3_percent", "bonus_value"].forEach((key) => {
       if (key in data) data[key] = Number(String(data[key]).replace(",", ".") || 0);
     });
     if ("has_bonus" in data) data.has_bonus = data.has_bonus === "1";
@@ -1561,7 +1575,7 @@ function renderField(field, item) {
       : type === "plan"
         ? state.plans.map((plan) => [
           String(plan.id),
-          `${plan.name} · ${Number(plan.commission_percent || 0)}%`
+          `${plan.segment || "Adesão/PF"} · ${plan.name} · ${Number(plan.commission_1_percent || 0)}% / ${Number(plan.commission_2_percent || 0)}% / ${Number(plan.commission_3_percent || 0)}%`
         ])
       : type === "option"
         ? optionValues(options)
@@ -1580,11 +1594,13 @@ function renderLeadPlanPreview(planId, planValue = 0, hasBonus = false, bonusDes
   if (!plan) {
     return `<div class="commission-preview muted">Selecione um plano e informe o valor fechado para calcular a comissão.</div>`;
   }
-  const commission = Number(planValue || 0) * Number(plan.commission_percent || 0) / 100;
+  const percentages = [1, 2, 3].map((installment) => Number(plan[`commission_${installment}_percent`] || 0));
+  const commissions = percentages.map((percent) => Number(planValue || 0) * percent / 100);
+  const commission = commissions.reduce((sum, value) => sum + value, 0);
   return `<div class="commission-preview">
     <div><span>Valor fechado</span><strong>${currency(planValue)}</strong></div>
-    <div><span>Percentual</span><strong>${Number(plan.commission_percent || 0)}%</strong></div>
-    <div><span>Comissão calculada</span><strong>${currency(commission)}</strong></div>
+    ${commissions.map((value, index) => `<div><span>Parcela ${index + 1} · ${percentages[index]}%</span><strong>${currency(value)}</strong></div>`).join("")}
+    <div><span>Total de comissões</span><strong>${currency(commission)}</strong></div>
     <div><span>Premiação</span><strong>${hasBonus ? `${currency(bonusValue)} · ${escapeHtml(bonusDescription || "Premiação")}` : "Não"}</strong></div>
   </div>`;
 }
@@ -1839,6 +1855,30 @@ $("#content").addEventListener("click", async (event) => {
   }
   const view = event.target.closest("[data-view]");
   if (view) return navigate(view.dataset.view);
+  const savePlan = event.target.closest("[data-save-plan]");
+  if (savePlan) {
+    const row = savePlan.closest("[data-plan-row]");
+    const plan = state.plans.find((item) => sameId(item.id, savePlan.dataset.savePlan));
+    if (!row || !plan) return showToast("Plano não encontrado.", "error");
+    const payload = {
+      segment: plan.segment,
+      name: row.querySelector('[name="name"]').value.trim(),
+      commission_1_percent: Number(row.querySelector('[name="commission_1_percent"]').value || 0),
+      commission_2_percent: Number(row.querySelector('[name="commission_2_percent"]').value || 0),
+      commission_3_percent: Number(row.querySelector('[name="commission_3_percent"]').value || 0)
+    };
+    if (!payload.name) return showToast("Informe o nome do plano.", "error");
+    savePlan.disabled = true;
+    try {
+      await api(`/api/plans/${plan.id}`, { method: "PUT", body: JSON.stringify(payload) });
+      state.plans = [];
+      showToast("Plano e comissões atualizados.");
+      return renderSettings();
+    } catch (error) {
+      savePlan.disabled = false;
+      return showToast(error.message, "error");
+    }
+  }
   const add = event.target.closest("[data-new]");
   if (add) return openEntityForm(add.dataset.new);
   const edit = event.target.closest("[data-edit]");

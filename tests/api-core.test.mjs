@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  addMonths,
   applyPlanRulePayload,
   checkLoginRateLimit,
   validateEntityPayload,
@@ -28,6 +29,33 @@ test("applyPlanRulePayload calcula comissao e premiacao do lead", () => {
   assert.equal(result.commission, 1500);
   assert.equal(result.bonus_value, 250);
   assert.equal(result.payment_status, "A receber");
+});
+
+test("applyPlanRulePayload separa as tres parcelas de comissao", () => {
+  const result = applyPlanRulePayload(
+    { plan_id: uuid, plan_value: 1000, has_bonus: false },
+    {
+      id: uuid,
+      name: "Plano PME",
+      segment: "PME",
+      commission_1_percent: 100,
+      commission_2_percent: 50,
+      commission_3_percent: 25
+    }
+  );
+
+  assert.equal(result.plan_segment, "PME");
+  assert.equal(result.commission_1, 1000);
+  assert.equal(result.commission_2, 500);
+  assert.equal(result.commission_3, 250);
+  assert.equal(result.commission_percent, 175);
+  assert.equal(result.commission, 1750);
+});
+
+test("addMonths preserva o dia ou usa o ultimo dia do mes", () => {
+  assert.equal(addMonths("2026-01-31", 1), "2026-02-28");
+  assert.equal(addMonths("2026-01-31", 2), "2026-03-31");
+  assert.equal(addMonths("2026-07-15", 1), "2026-08-15");
 });
 
 test("applyPlanRulePayload limpa dados financeiros quando o plano e removido sem valor", () => {
