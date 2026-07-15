@@ -19,6 +19,7 @@ const state = {
   settingsSection: "leads",
   quickFilters: {},
   globalLeadSearch: "",
+  financialValuesVisible: true,
   csrfToken: ""
 };
 let navigationController = null;
@@ -292,6 +293,18 @@ function updateHeader() {
   const action = $("#primary-action");
   action.innerHTML = info.action ? `${icon("plus")}<span>${info.action}</span>` : "";
   action.hidden = !info.action;
+  $("#financial-values-toggle").hidden = state.view !== "payments";
+  syncFinancialValuesVisibility();
+}
+
+function syncFinancialValuesVisibility() {
+  const hidden = !state.financialValuesVisible;
+  document.body.classList.toggle("financial-values-hidden", hidden);
+  const toggle = $("#financial-values-toggle");
+  toggle.innerHTML = icon(hidden ? "eyeOff" : "eye");
+  toggle.setAttribute("aria-label", hidden ? "Mostrar valores financeiros" : "Ocultar valores financeiros");
+  toggle.setAttribute("aria-pressed", String(hidden));
+  toggle.title = hidden ? "Mostrar valores" : "Ocultar valores";
 }
 
 async function navigate(view) {
@@ -988,12 +1001,12 @@ function renderPaymentsTable(items) {
       <td><strong>${escapeHtml(group.lead_name || "-")}</strong><br><span class="muted">${escapeHtml(group.lead_phone || "")}</span></td>
       <td>${escapeHtml(group.plan_segment || "-")}<br><span class="muted">${escapeHtml(group.plan_name || "-")}</span></td>
       <td>${formatDate(group.effective_date)}</td>
-      <td>${currency(group.plan_value)}</td>
+      <td><span class="financial-value">${currency(group.plan_value)}</span></td>
       <td>${renderPaymentFlag(group.commissions[1], "Parcela 1")}</td>
       <td>${renderPaymentFlag(group.commissions[2], "Parcela 2")}</td>
       <td>${renderPaymentFlag(group.commissions[3], "Parcela 3")}</td>
       <td>${renderPaymentFlag(group.bonus, group.bonus_description || "Premiação")}</td>
-      <td><strong class="payment-total">${currency(activePaymentTotal(group))}</strong></td>
+      <td><strong class="payment-total financial-value">${currency(activePaymentTotal(group))}</strong></td>
     </tr>`;
     }).join("")}</tbody>
   </table></div>`;
@@ -1003,7 +1016,7 @@ function renderPaymentFlag(payment, label) {
   if (!payment || Number(payment.amount || 0) <= 0) return '<span class="payment-not-applicable">Não cadastrada</span>';
   const overdue = payment.status === "A receber" && payment.due_date && payment.due_date < new Date().toISOString().slice(0, 10);
   return `<div class="payment-installment">
-    <strong>${currency(payment.amount)}</strong>
+    <strong class="financial-value">${currency(payment.amount)}</strong>
     <span>${escapeHtml(label)}${payment.kind === "commission" ? ` · ${Number(payment.percent || 0)}%` : ""}</span>
     <small>Vence ${formatDate(payment.due_date)}${overdue ? ' · <b>Em atraso</b>' : ""}</small>
     <label class="payment-status-toggle payment-status-compact">
@@ -1766,6 +1779,11 @@ $("#toggle-password").addEventListener("click", () => {
 
 $("#logout-button").innerHTML = icon("logout");
 $("#menu-button").innerHTML = icon("menu");
+syncFinancialValuesVisibility();
+$("#financial-values-toggle").addEventListener("click", () => {
+  state.financialValuesVisible = !state.financialValuesVisible;
+  syncFinancialValuesVisibility();
+});
 $$("[data-close-modal]").forEach((button) => { button.innerHTML = button.classList.contains("icon-button") ? icon("close") : button.innerHTML; });
 
 $("#logout-button").addEventListener("click", async () => {

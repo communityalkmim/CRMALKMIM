@@ -935,6 +935,29 @@ textarea {
   color: var(--forest);
 }
 
+.page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.financial-values-toggle {
+  width: 34px;
+  height: 34px;
+  color: var(--forest);
+}
+
+.financial-values-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.financial-values-hidden #payments-summary .stat-card > strong,
+.financial-values-hidden .payment-table .financial-value {
+  filter: blur(8px);
+  user-select: none;
+}
+
 .payment-table {
   min-width: 1460px;
 }
