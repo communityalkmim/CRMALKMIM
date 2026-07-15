@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=__BUILD_VERSION__";
+import { formatDate, formatDateTime } from "./date-utils.js?v=__BUILD_VERSION__";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -97,19 +98,6 @@ function initials(name = "") {
 
 function sameId(left, right) {
   return String(left) === String(right);
-}
-
-function formatDate(value, options = {}) {
-  if (!value) return "Sem data";
-  const date = new Date(`${value}T12:00:00`);
-  return new Intl.DateTimeFormat("pt-BR", options.year ? options : { day: "2-digit", month: "short" }).format(date);
-}
-
-function formatDateTime(value) {
-  if (!value) return "Agora";
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
-  }).format(new Date(value.replace(" ", "T") + (value.includes("Z") ? "" : "Z")));
 }
 
 function compactCalendarDate(date, time = "") {
