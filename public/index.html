@@ -11,7 +11,16 @@
     <link rel="stylesheet" href="/styles.css?v=__BUILD_VERSION__" />
   </head>
   <body>
-    <section id="login-screen" class="login-screen">
+    <div id="session-loading" class="session-loading" role="status" aria-live="polite">
+      <div>
+        <span class="brand-mark">M</span>
+        <strong>Maikon CRM</strong>
+        <div class="spinner"></div>
+        <p>Validando sua sessão...</p>
+      </div>
+    </div>
+
+    <section id="login-screen" class="login-screen" hidden>
       <div class="login-visual">
         <div class="brand brand-light">
           <span class="brand-mark">M</span>

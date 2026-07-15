@@ -1718,6 +1718,7 @@ async function openLeadHistory(id) {
 function showLogin() {
   state.user = null;
   state.csrfToken = "";
+  $("#session-loading").hidden = true;
   $("#app").hidden = true;
   $("#login-screen").hidden = false;
 }
@@ -1725,6 +1726,7 @@ function showLogin() {
 function showApp(user) {
   state.user = user;
   $("#sidebar-user").textContent = user.name;
+  $("#session-loading").hidden = true;
   $("#login-screen").hidden = true;
   $("#app").hidden = false;
   navigate("dashboard");

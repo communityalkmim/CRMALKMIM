@@ -58,6 +58,44 @@ h3,
   font-family: "Manrope", sans-serif;
 }
 
+.session-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--forest);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(200, 232, 92, 0.16), transparent 24%),
+    var(--canvas);
+}
+
+.session-loading > div {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.session-loading .brand-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+}
+
+.session-loading strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 17px;
+}
+
+.session-loading .spinner {
+  margin: 5px 0 0;
+}
+
+.session-loading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .login-screen {
   min-height: 100vh;
   display: grid;
