@@ -1,6 +1,7 @@
 import { isSupabaseConfigured, supabaseApi } from "./supabase-api.js?v=__BUILD_VERSION__";
 import { formatDate, formatDateTime } from "./date-utils.js?v=__BUILD_VERSION__";
 import { activePaymentTotal, fortnightRanges, groupPaymentsByLead } from "./payment-utils.js?v=__BUILD_VERSION__";
+import { normalizeLeadBonusInput } from "./lead-utils.js?v=__BUILD_VERSION__";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -1548,6 +1549,17 @@ async function openEntityForm(entity, item = null) {
     form.elements.plan_value?.addEventListener("input", () => validateLeadPlanSelection(form));
     form.elements.plan_value?.addEventListener("change", () => validateLeadPlanSelection(form, { report: true }));
     form.elements.plan_id?.addEventListener("change", () => validateLeadPlanSelection(form));
+    form.elements.bonus_value?.addEventListener("input", () => {
+      const value = Number(String(form.elements.bonus_value.value || 0).replace(",", "."));
+      if (value > 0 && form.elements.has_bonus) form.elements.has_bonus.value = "1";
+      updateLeadPlanPreview();
+    });
+    form.elements.has_bonus?.addEventListener("change", () => {
+      if (form.elements.has_bonus.value !== "0") return;
+      if (form.elements.bonus_value) form.elements.bonus_value.value = "";
+      if (form.elements.bonus_description) form.elements.bonus_description.value = "";
+      updateLeadPlanPreview();
+    });
     validateLeadPlanSelection(form);
     updateLeadPlanPreview();
   }
@@ -1565,7 +1577,8 @@ async function openEntityForm(entity, item = null) {
     ["plan_value", "commission_1_percent", "commission_2_percent", "commission_3_percent", "bonus_value"].forEach((key) => {
       if (key in data) data[key] = Number(String(data[key]).replace(",", ".") || 0);
     });
-    if ("has_bonus" in data) data.has_bonus = data.has_bonus === "1";
+    if (entity === "leads") Object.assign(data, normalizeLeadBonusInput(data));
+    else if ("has_bonus" in data) data.has_bonus = data.has_bonus === "1";
     if (entity === "leads" && data.plan_id && data.plan_value <= 0) {
       showToast("Informe o valor fechado do plano.", "error");
       submit.disabled = false;

@@ -728,6 +728,17 @@ async function selectEntity(entity, token, { pagination = {}, filters = {}, sele
 }
 
 export function applyPlanRulePayload(payload, plan) {
+  const rawBonusValue = Number(payload.bonus_value || 0);
+  const hasBonus = Boolean(payload.has_bonus) || rawBonusValue > 0;
+  const bonusValue = hasBonus ? rawBonusValue : 0;
+  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiacao.");
+  const bonusFields = {
+    has_bonus: hasBonus,
+    bonus_description: hasBonus ? payload.bonus_description || null : null,
+    bonus_value: bonusValue,
+    payment_status: payload.payment_status || "A receber"
+  };
+
   if (!payload.plan_id) {
     if (Number(payload.plan_value || 0) > 0) {
       throw httpError("Preencha o plano escolhido antes de salvar o lead.");
@@ -746,10 +757,7 @@ export function applyPlanRulePayload(payload, plan) {
       commission_1: 0,
       commission_2: 0,
       commission_3: 0,
-      has_bonus: false,
-      bonus_description: null,
-      bonus_value: 0,
-      payment_status: "A receber"
+      ...bonusFields
     };
   }
   if (!plan) throw new Error("Plano nao encontrado.");
@@ -762,9 +770,6 @@ export function applyPlanRulePayload(payload, plan) {
   ];
   const commissions = commissionPercents.map((percent) => Math.round(planValue * percent) / 100);
   const commissionPercent = commissionPercents.reduce((sum, percent) => sum + percent, 0);
-  const hasBonus = Boolean(payload.has_bonus);
-  const bonusValue = hasBonus ? Number(payload.bonus_value || 0) : 0;
-  if (hasBonus && bonusValue <= 0) throw new Error("Informe o valor da premiacao.");
   return {
     ...payload,
     plan_name: plan.name,
@@ -778,10 +783,7 @@ export function applyPlanRulePayload(payload, plan) {
     commission_1: commissions[0],
     commission_2: commissions[1],
     commission_3: commissions[2],
-    has_bonus: hasBonus,
-    bonus_description: hasBonus ? payload.bonus_description || null : null,
-    bonus_value: bonusValue,
-    payment_status: payload.payment_status || "A receber"
+    ...bonusFields
   };
 }
 

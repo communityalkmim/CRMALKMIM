@@ -74,14 +74,24 @@ test("addMonths preserva o dia ou usa o ultimo dia do mes", () => {
   assert.equal(addMonths("2026-07-15", 1), "2026-08-15");
 });
 
-test("applyPlanRulePayload limpa dados financeiros quando o plano e removido sem valor", () => {
+test("applyPlanRulePayload limpa comissoes mas preserva premiacao quando o plano e removido", () => {
   const result = applyPlanRulePayload({ plan_id: null, plan_value: 0, has_bonus: true, bonus_value: 100 });
 
   assert.equal(result.plan_name, null);
   assert.equal(result.plan_value, 0);
   assert.equal(result.commission, 0);
-  assert.equal(result.has_bonus, false);
-  assert.equal(result.bonus_value, 0);
+  assert.equal(result.has_bonus, true);
+  assert.equal(result.bonus_value, 100);
+});
+
+test("applyPlanRulePayload ativa premiacao quando recebeu valor positivo", () => {
+  const result = applyPlanRulePayload(
+    { plan_id: uuid, plan_value: 1000, has_bonus: false, bonus_value: 175 },
+    { id: uuid, name: "Plano Premium", commission_percent: 100 }
+  );
+
+  assert.equal(result.has_bonus, true);
+  assert.equal(result.bonus_value, 175);
 });
 
 test("applyPlanRulePayload bloqueia valor informado sem plano escolhido", () => {
@@ -113,6 +123,31 @@ test("validateEntityPayload normaliza payload valido de lead", () => {
   assert.equal(payload.email, "cliente@example.com");
   assert.equal(payload.entry_date, "2026-07-12");
   assert.equal(payload.payment_status, "Recebido");
+});
+
+test("validateEntityPayload preserva todos os campos editaveis do lead", () => {
+  const input = {
+    name: "Cliente Completo",
+    phone: "11999999999",
+    email: "cliente@example.com",
+    origin: "Indicação",
+    entry_date: "2026-07-16",
+    contact_date: "2026-07-16",
+    effective_date: "2026-07-31",
+    plan_id: uuid,
+    plan_value: 650.5,
+    status: "Novo",
+    has_bonus: true,
+    bonus_description: "Campanha",
+    bonus_value: 200,
+    notes: "Cadastro conferido"
+  };
+  const result = validateEntityPayload("leads", input);
+
+  assert.deepEqual(Object.keys(result).sort(), Object.keys(input).sort());
+  assert.equal(result.bonus_value, 200);
+  assert.equal(result.effective_date, "2026-07-31");
+  assert.equal(result.notes, "Cadastro conferido");
 });
 
 test("validateEntityPayload bloqueia email invalido", () => {
